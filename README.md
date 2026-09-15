@@ -94,3 +94,7 @@ ruff format --check .
 Tests use synthetic data. For integration testing, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples or real tracks.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under MIT.
+
+## Sony RAW layout warnings
+
+ExifTool may log `[minor] Oversized SubIFD StripByteCounts` for some Sony ARW files. Its author identifies this as a [known ARW issue](https://exiftool.org/forum/index.php?topic=17663.0). The script keeps the warning in the log and still requires unchanged RAW and preview hashes, preserved unrelated metadata, and byte-exact reconstruction of the original. Investigate any new or different warning rather than suppressing warnings globally.
