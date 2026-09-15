@@ -9,7 +9,7 @@ The tool creates a compact recovery backup before editing anything. It verifies 
 - macOS or Linux, with Python 3.10 or later and the IANA timezone database.
 - [ExifTool](https://exiftool.org/). On macOS, install it with `brew install exiftool`.
 - RAW files with one contiguous `SubIFD` image strip. Tested with Sony ARW. Unsupported layouts stop during planning, before edits.
-- Free disk space for compressed metadata backups and one temporary RAW file.
+- Free disk space for compressed metadata backups and one temporary RAW file per worker.
 
 Python uses only its standard library. No photos, GPX tracks or metadata are uploaded.
 
@@ -36,6 +36,8 @@ python3 photo_clock_fix.py verify --backup /path/to/photo-recovery
 ```
 
 Default names are `DSC0001.ARW`, `DSC0002.ARW`, and so on. Width expands beyond four digits if needed. Photos with equal capture times use the Sony shutter counter when available for every photo, which preserves burst order across filename counter rollovers. Otherwise they use natural filename order. Mixed detected camera identities are rejected. `--prefix`, `--digits` and `--extensions` customize selection and naming. Selection includes only matching files directly in the folder. Other files and subfolders are untouched.
+
+`apply` uses two concurrent workers by default. Set `--workers 1` for sequential processing or choose up to eight workers for faster storage.
 
 `apply` can be run again after interruption or completion. Its journal prevents double correction. A folder marker prevents accidentally planning another correction on processed photos. Keep the marker and recovery directory until you are finished with the work. Do not run concurrent commands against the same folder or modify photos during a run.
 

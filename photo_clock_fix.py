@@ -2,6 +2,7 @@
 """Correct a camera clock, order photos, and optionally interpolate a GPX track."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import bisect
 import datetime as dt
 import gzip
@@ -688,9 +689,8 @@ def apply(args):
     if unexpected:
         raise ValueError(f"New photos appeared after planning: {unexpected[:5]}")
     if state["phase"] == "write":
-        for i, r in enumerate(records):
-            if i in state["written"]:
-                continue
+
+        def process(i, r):
             logging.info(
                 "Applying %d/%d %s -> %s; capture=%s; GPS=%s",
                 i + 1,
@@ -734,10 +734,25 @@ def apply(args):
                 os.fsync(f.fileno())
             if original.exists():
                 original.unlink()
-            state["written"].append(i)
-            save(state_path, state)
-            if i % 10 == 0 or i == len(records) - 1:
-                print(f"Corrected and verified {i + 1}/{len(records)}", flush=True)
+            return i
+
+        executor = ThreadPoolExecutor(max_workers=args.workers)
+        futures = [
+            executor.submit(process, i, r)
+            for i, r in enumerate(records)
+            if i not in state["written"]
+        ]
+        try:
+            for future in as_completed(futures):
+                i = future.result()
+                state["written"].append(i)
+                save(state_path, state)
+                count = len(state["written"])
+                if count % 10 == 0 or count == len(records):
+                    print(f"Corrected and verified {count}/{len(records)}", flush=True)
+        finally:
+            # Stop queued work on failure; allow already-running files to finish safely.
+            executor.shutdown(wait=True, cancel_futures=True)
         state["phase"] = "rename"
         save(state_path, state)
     if state["phase"] == "rename":
@@ -917,6 +932,14 @@ def main():
     ]:
         p = sub.add_parser(command)
         p.add_argument("--backup", type=Path, required=True)
+        if command == "apply":
+            p.add_argument(
+                "--workers",
+                type=int,
+                choices=range(1, 9),
+                default=2,
+                help="Concurrent photo writers, default 2",
+            )
         if command == "restore":
             p.add_argument("--output", type=Path, required=True)
         p.set_defaults(func=function)
@@ -936,6 +959,7 @@ def main():
         filename=log_path,
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
     logging.info(
         "Command %s; Python %s; platform %s; arguments %s",
