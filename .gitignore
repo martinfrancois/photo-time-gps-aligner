@@ -14,3 +14,15 @@ manifest.json
 state.json
 verification.json
 .photo-clock-fix.json
+*.ARW_original
+*.arw_original
+*.GPX
+*.jpeg
+*.JPEG
+*.NEF
+*.CR2
+*.CR3
+*.HEIC
+*.ffs_db
+gps-unmatched-*.txt
+.photo-clock-*
