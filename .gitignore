@@ -26,3 +26,8 @@ verification.json
 *.ffs_db
 gps-unmatched-*.txt
 .photo-clock-*
+
+# Private Google Timeline exports
+Timeline*.json
+timeline-export*.json
+location-history*.json

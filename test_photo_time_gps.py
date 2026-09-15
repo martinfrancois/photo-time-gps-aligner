@@ -63,7 +63,7 @@ class ClockTests(unittest.TestCase):
             return dt.datetime.fromtimestamp(x, fix.UTC)
 
         track = [[(10, 0, 0, None), (100, 0, 0, None)]]
-        self.assertIn("No GPX", fix.unmatched_reason([], when(20), 60))
+        self.assertIn("No location", fix.unmatched_reason([], when(20), 60))
         self.assertIn("Before", fix.unmatched_reason(track, when(0), 60))
         self.assertIn("After", fix.unmatched_reason(track, when(110), 60))
         self.assertIn("90.00 seconds", fix.unmatched_reason(track, when(20), 60))

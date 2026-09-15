@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correct RAW photo times, match GPX locations, and optionally rename photos."""
+"""Correct RAW photo times, match GPX or Google Timeline locations, and optionally rename photos."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,6 +21,7 @@ import sys
 import uuid
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
+from timeline import Timeline
 
 UTC = dt.timezone.utc
 CHUNK = 8 * 1024 * 1024
@@ -234,7 +235,7 @@ def position(tracks, instant, max_gap):
 
 def unmatched_reason(tracks, instant, max_gap):
     if not tracks:
-        return "No GPX track supplied."
+        return "No location track supplied."
     t = instant.timestamp()
     first = min(p[0][0] for p in tracks)
     last = max(p[-1][0] for p in tracks)
@@ -314,16 +315,29 @@ def completed_marker(marker):
 
 def plan(args):
     folder, backup = args.folder.resolve(), args.backup.resolve()
-    correct_time = args.reference is not None or args.actual is not None
+    calibration_path = getattr(args, "calibration", None)
+    timeline_path = getattr(args, "timeline", None)
+    location_path = args.gpx or timeline_path
+    if args.gpx and timeline_path:
+        raise ValueError("Choose either --gpx or --timeline")
+    if calibration_path and (args.reference or args.actual):
+        raise ValueError(
+            "--calibration cannot be combined with --reference or --actual"
+        )
+    correct_time = bool(calibration_path or args.reference or args.actual)
     rename = getattr(args, "rename", False)
     if (args.reference is None) != (args.actual is None):
         raise ValueError("--reference and --actual must be supplied together")
-    if getattr(args, "gps_only", False) and (correct_time or rename or not args.gpx):
+    if getattr(args, "gps_only", False) and (
+        correct_time or rename or not location_path
+    ):
         raise ValueError(
-            "--gps-only requires --gpx and cannot be combined with clock correction or --rename"
+            "--gps-only requires --gpx or --timeline and cannot be combined with clock correction or --rename"
         )
-    if not (correct_time or rename or args.gpx):
-        raise ValueError("Choose --gpx, --reference with --actual, or --rename")
+    if not (correct_time or rename or location_path):
+        raise ValueError(
+            "Choose --gpx/--timeline, --reference with --actual, --calibration, or --rename"
+        )
     previous_run_id = None
     marker = folder / ".photo-clock-fix.json"
     if marker.exists():
@@ -348,13 +362,16 @@ def plan(args):
     elif args.resume:
         raise ValueError("No plan exists to resume")
     zone = ZoneInfo(args.timezone) if args.timezone else None
-    actual = dt.datetime.fromisoformat(args.actual) if correct_time else None
+    actual = dt.datetime.fromisoformat(args.actual) if args.actual else None
     if correct_time:
         if zone is None:
             raise ValueError("Clock correction requires --timezone")
-        if actual.utcoffset() is None:
+        if actual is not None and actual.utcoffset() is None:
             raise ValueError("--actual must include an explicit UTC offset")
-        if actual.utcoffset() != actual.astimezone(zone).utcoffset():
+        if (
+            actual is not None
+            and actual.utcoffset() != actual.astimezone(zone).utcoffset()
+        ):
             raise ValueError("--actual UTC offset disagrees with --timezone")
     extensions = {
         "." + x.strip().lstrip(".").lower() for x in args.extensions.split(",")
@@ -370,7 +387,7 @@ def plan(args):
     if not files:
         raise ValueError("No matching photos")
     reference = None
-    if correct_time:
+    if args.reference:
         reference = (
             args.reference.resolve()
             if args.reference.is_absolute()
@@ -400,9 +417,55 @@ def plan(args):
     by_path = {Path(x["SourceFile"]): x for x in metadata}
     offset = (
         actual.astimezone(zone).replace(tzinfo=None) - captured(by_path[reference])
-        if correct_time
+        if reference
         else dt.timedelta(0)
     )
+    calibration = None
+    drift = None
+    if calibration_path:
+        calibration = json.loads(calibration_path.read_text())
+        if (
+            not calibration.get("ready")
+            or not calibration.get("reference")
+            or not calibration.get("actual")
+        ):
+            raise ValueError(
+                "Calibration must be a completed plan with an original clock reference"
+            )
+        ref_meta = next(
+            r["metadata"]
+            for r in calibration["records"]
+            if r["original"] == calibration["reference"]
+        )
+        if not ref_meta.get("ExifIFD:OffsetTimeOriginal"):
+            raise ValueError("Calibration reference needs an explicit EXIF UTC offset")
+        actual = dt.datetime.fromisoformat(calibration["actual"])
+        if actual.utcoffset() is None:
+            raise ValueError("Calibration actual timestamp needs a UTC offset")
+        drift = actual - capture_instant(ref_meta)
+        for meta in metadata:
+            if any(
+                meta.get(k) != ref_meta.get(k)
+                for k in (
+                    "IFD0:Model",
+                    "Sony:InternalSerialNumber",
+                    "ExifIFD:OffsetTimeOriginal",
+                )
+            ):
+                raise ValueError(
+                    "Camera identity or UTC offset differs from calibration reference"
+                )
+        logging.info(
+            "Reused calibration; UTC clock correction %.6f seconds",
+            drift.total_seconds(),
+        )
+    timeline = (
+        Timeline(timeline_path, getattr(args, "max_accuracy", 50))
+        if timeline_path
+        else None
+    )
+    if timeline:
+        logging.info("Timeline sample filtering: %s", dict(timeline.stats))
     tracks = load_track(args.gpx) if args.gpx else []
 
     def natural(p):
@@ -438,8 +501,16 @@ def plan(args):
             if correct_time
             else capture_instant(by_path[p], args.timezone)
         )
+        if drift is not None:
+            corrected = (
+                capture_instant(by_path[p]).astimezone(UTC) + drift
+            ).astimezone(zone)
         # A single wall-clock offset cannot safely resolve a DST transition.
-        if correct_time and corrected.utcoffset() != actual.utcoffset():
+        if (
+            correct_time
+            and drift is None
+            and corrected.utcoffset() != actual.utcoffset()
+        ):
             raise ValueError(
                 "Photos cross a timezone offset transition; split into separate runs"
             )
@@ -473,6 +544,10 @@ def plan(args):
             if records[-1]["gps"] is None
             else None
         )
+        if timeline:
+            records[-1]["gps"], records[-1]["gps_reason"] = timeline.match(
+                corrected, args.max_gap, position, unmatched_reason
+            )
     backup.mkdir(parents=True, exist_ok=True)
     (backup / "bytes").mkdir(exist_ok=True)
     if previous:
@@ -494,7 +569,20 @@ def plan(args):
         rename=rename,
         previous_run_id=previous_run_id,
         actual=args.actual,
-        offset_seconds=offset.total_seconds(),
+        calibration_path=str(calibration_path.resolve()) if calibration_path else None,
+        calibration_sha256=hash_region(
+            calibration_path, 0, calibration_path.stat().st_size
+        )
+        if calibration_path
+        else None,
+        utc_correction_seconds=drift.total_seconds() if drift is not None else None,
+        timeline_path=str(timeline_path.resolve()) if timeline_path else None,
+        timeline_sha256=hash_region(timeline_path, 0, timeline_path.stat().st_size)
+        if timeline_path
+        else None,
+        timeline_stats=dict(timeline.stats) if timeline else None,
+        max_accuracy=getattr(args, "max_accuracy", 50),
+        offset_seconds=offset.total_seconds() if drift is None else None,
         gpx_path=str(args.gpx.resolve()) if args.gpx else None,
         exiftool_version=subprocess.check_output(
             ["exiftool", "-ver"], text=True
@@ -508,8 +596,12 @@ def plan(args):
         ready=False,
     )
     save(backup / "manifest.json", manifest)
+    if drift is not None:
+        print(
+            f"Reused UTC clock correction: {drift.total_seconds()} seconds", flush=True
+        )
     print(
-        f"Clock correction: {str(offset.total_seconds()) + ' seconds' if correct_time else 'disabled'}; GPS matches: {sum(r['gps'] is not None for r in records)}/{len(records)}",
+        f"Clock correction: {('reused calibration' if drift is not None else str(offset.total_seconds()) + ' seconds') if correct_time else 'disabled'}; GPS matches: {sum(r['gps'] is not None for r in records)}/{len(records)}",
         flush=True,
     )
     for i, record in enumerate(records):
@@ -618,8 +710,11 @@ def write_args(record):
             f"-GPSDateStamp={utc:%Y:%m:%d}",
             f"-GPSTimeStamp={utc:%H:%M:%S}.{utc.microsecond:06d}",
             "-GPSMapDatum=WGS-84",
-            "-GPSProcessingMethod=GPS",
+            f"-GPSProcessingMethod={gps.get('processing_method', 'GPS')}",
         ]
+        if gps.get("source") == "Google Timeline rawSignals.position":
+            # Do not leave stale altitude or accuracy tags from an earlier track.
+            args += ["-GPSAltitude=", "-GPSAltitudeRef=", "-GPSHPositioningError="]
         if gps["altitude"] is not None:
             args += [
                 f"-GPSAltitude={abs(gps['altitude']):.6f}",
@@ -693,6 +788,19 @@ def check_metadata(record, meta):
             if str(meta.get("ExifIFD:" + tag)).zfill(6) != f"{instant.microsecond:06d}":
                 raise ValueError(f"{tag} mismatch")
     if record["gps"]:
+        if meta.get("GPS:GPSProcessingMethod") != record["gps"].get(
+            "processing_method", "GPS"
+        ):
+            raise ValueError("GPS processing method mismatch")
+        if record["gps"].get("source") == "Google Timeline rawSignals.position" and any(
+            k in meta
+            for k in (
+                "GPS:GPSAltitude",
+                "GPS:GPSAltitudeRef",
+                "GPS:GPSHPositioningError",
+            )
+        ):
+            raise ValueError("Unexpected Timeline altitude or horizontal error tag")
         for key, tag, ref in [
             ("lat", "GPSLatitude", "GPSLatitudeRef"),
             ("lon", "GPSLongitude", "GPSLongitudeRef"),
@@ -1030,6 +1138,22 @@ def main():
         help="IANA timezone: required for clock correction, otherwise a fallback for missing EXIF offsets",
     )
     p.add_argument("--gpx", type=Path)
+    p.add_argument(
+        "--timeline",
+        type=Path,
+        help="Google device Timeline JSON export with measured rawSignals.position",
+    )
+    p.add_argument(
+        "--max-accuracy",
+        type=float,
+        default=50,
+        help="Maximum reported Timeline horizontal error in meters (default 50)",
+    )
+    p.add_argument(
+        "--calibration",
+        type=Path,
+        help="Reuse original reference from a previous recovery manifest; requires unchanged camera clock/settings and --timezone",
+    )
     p.add_argument(
         "--gps-only",
         action="store_true",

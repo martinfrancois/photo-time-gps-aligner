@@ -1,6 +1,6 @@
 # Photo Time & GPS
 
-Match RAW photos to a GPX track, correct a camera clock when needed, and optionally rename photos in capture order. Clock correction, GPS matching and renaming can be used independently.
+Match RAW photos to a GPX track or Google Timeline export, correct a camera clock when needed, and optionally rename photos in capture order. Clock correction, GPS matching and renaming can be used independently.
 
 The tool creates a compact recovery backup before editing anything. It verifies the RAW bytes, embedded previews, timestamps and GPS values as it works. A separate verification command reads the final files again.
 
@@ -11,7 +11,7 @@ The tool creates a compact recovery backup before editing anything. It verifies 
 - RAW files with one contiguous `SubIFD` image strip. Tested with Sony ARW. Unsupported layouts stop during planning, before edits.
 - Free disk space for compressed metadata backups and one temporary RAW file per worker.
 
-Python uses only its standard library. No photos, GPX tracks or metadata are uploaded.
+Python uses only its standard library. No photos, location exports or metadata are uploaded.
 
 ## Use
 
@@ -49,6 +49,41 @@ Supply `--reference` and `--actual` together to enable clock correction. Omit bo
 
 Planning reads and hashes every selected photo and writes its recovery backup. It does not change the photos. Use a new backup directory for each run.
 
+### Use Google Timeline
+
+Replace `--gpx` with `--timeline` for a Google device Timeline JSON export:
+
+```sh
+python3 photo_time_gps.py plan /path/to/photos \
+  --gps-only \
+  --timeline /path/to/timeline-export.json \
+  --max-accuracy 50 \
+  --backup /path/to/photo-recovery
+```
+
+This supports the device export containing `rawSignals.position` with `LatLng`, `timestamp`, `accuracyMeters` and `source`. Other export formats fail with an explanation. [Google documents how to export device Timeline data](https://support.google.com/maps/answer/14169818). The parser uses timestamped measured positions; it excludes inferred visits, activity endpoints and simplified semantic paths.
+
+Only readings with a positive reported horizontal accuracy of at most `--max-accuracy` metres are accepted (default 50). Missing/invalid accuracy and malformed positions are excluded and counted in the log and manifest. Conflicting positions at the same timestamp are excluded; identical coordinates use the lowest reported error. The normal `--max-gap` limit still applies between accepted readings. A smaller reported error is preferable, but is not a guarantee of the phone's true position. Interpolation assumes movement along the path between the readings.
+
+Each match records its contributing sources, sample timestamps and the larger reported endpoint error in the private manifest. This error is not written as the photo's GPS accuracy, since interpolation adds uncertainty. Altitude is omitted because the export does not specify its datum or vertical accuracy; stale altitude and accuracy tags are cleared when assigning a Timeline match. GPS-only measurements use the EXIF `GPS` processing method; fused or Wi-Fi measurements use `MANUAL` rather than claiming satellite-only positioning.
+
+### Reuse a calibration for another trip
+
+When the camera clock and timezone settings stayed unchanged, reuse a previous recovery manifest containing an original clock reference:
+
+```sh
+python3 photo_time_gps.py plan /path/to/earlier-trip \
+  --calibration /path/to/previous-recovery/manifest.json \
+  --timezone America/New_York \
+  --timeline /path/to/timeline-export.json \
+  --rename \
+  --backup /path/to/earlier-trip-recovery
+```
+
+The script reads the original reference metadata from that manifest, computes the camera error in UTC, then converts each corrected instant to the new destination timezone. It does not read the already-corrected reference photo as an original. For example, a camera set to UTC+02 that is 92 seconds slow needs a different local-time adjustment in New York than in Chicago. Calibration reuse checks camera identity and the original EXIF UTC offset; a difference stops planning. Matching metadata cannot prove the camera clock was never adjusted, and one reference cannot estimate drift over several days.
+
+`--calibration` replaces `--reference` and `--actual` and requires `--timezone`. Omit both location-source options if geotagging is not needed. Reused UTC calibration can cross destination daylight-saving transitions; direct local-clock calibration requires a constant destination UTC offset.
+
 ### Apply and verify
 
 Inspect the reported clock correction and match count, then apply the saved plan:
@@ -68,7 +103,7 @@ With `--rename`, names are `DSC0001.ARW`, `DSC0002.ARW`, and so on. Width expand
 
 The offset is the difference between the reference photo's stored camera time and the supplied real local time. When clock correction is enabled, the script corrects EXIF capture, digitization and modification dates, Sony capture time when present, fractional seconds, UTC offsets and filesystem modification time. It preserves the original date/time values in the recovery manifest. On macOS, creation time is also corrected when the `SetFile` tool is available. Original creation times are saved for restoration. Other platforms retain their native creation-time behavior.
 
-A single reference measures a constant clock offset. It cannot measure clock drift or recover subsecond capture times the camera did not record. A reference timestamp with hundredths does not make every other photo accurate to a hundredth. Use separate runs if the camera's clock settings changed. Clock correction rejects photos spanning a destination daylight-saving offset change. GPS-only matching can cross such transitions when the capture instants are unambiguous.
+A single reference measures a constant clock offset. It cannot measure clock drift or recover subsecond capture times the camera did not record. A reference timestamp with hundredths does not make every other photo accurate to a hundredth. Use separate runs if the camera's clock settings changed. Direct reference clock correction rejects photos spanning a destination daylight-saving offset change. GPS-only matching can cross such transitions when the capture instants are unambiguous.
 
 GPX times are read with their UTC offsets. Positions are interpolated along a great-circle path between adjacent track points. Altitude is interpolated when both points have it. Separate track segments are never joined. Exact timestamp matches use the recorded point. There is no extrapolation before or after coverage.
 
@@ -114,7 +149,7 @@ ruff check .
 ruff format --check .
 ```
 
-Tests use synthetic data. With ExifTool installed, the integration test exercises GPS-only planning, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures. For integration testing, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples or real tracks.
+Tests use synthetic data. With ExifTool installed, the integration tests exercise GPS-only planning, Timeline filtering, calibration reuse across timezones, renaming, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures. For integration testing, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples, real tracks or Timeline exports.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under MIT.
 
