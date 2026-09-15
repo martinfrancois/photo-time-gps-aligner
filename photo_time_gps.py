@@ -22,6 +22,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 from timeline import Timeline
+from matching import match as match_locations
 
 UTC = dt.timezone.utc
 CHUNK = 8 * 1024 * 1024
@@ -318,8 +319,7 @@ def plan(args):
     calibration_path = getattr(args, "calibration", None)
     timeline_path = getattr(args, "timeline", None)
     location_path = args.gpx or timeline_path
-    if args.gpx and timeline_path:
-        raise ValueError("Choose either --gpx or --timeline")
+
     if calibration_path and (args.reference or args.actual):
         raise ValueError(
             "--calibration cannot be combined with --reference or --actual"
@@ -337,6 +337,12 @@ def plan(args):
     if not (correct_time or rename or location_path):
         raise ValueError(
             "Choose --gpx/--timeline, --reference with --actual, --calibration, or --rename"
+        )
+    if getattr(args, "only_missing_gps", False) and (
+        correct_time or rename or not location_path
+    ):
+        raise ValueError(
+            "--only-missing-gps requires GPS matching without time correction or renaming"
         )
     previous_run_id = None
     marker = folder / ".photo-clock-fix.json"
@@ -384,8 +390,25 @@ def plan(args):
         and p.suffix.lower() in extensions
         and not p.name.startswith(".")
     )
+    ignored_names = []
+    selection_metadata = None
+    if getattr(args, "only_missing_gps", False):
+        selection_metadata = exif(files, all_tags=True)
+        ignored_names = [
+            Path(meta["SourceFile"]).name
+            for meta in selection_metadata
+            if "GPS:GPSLatitude" in meta and "GPS:GPSLongitude" in meta
+        ]
+        files = [p for p in files if p.name not in ignored_names]
+        selection_metadata = [
+            meta
+            for meta in selection_metadata
+            if Path(meta["SourceFile"]).name not in ignored_names
+        ]
     if not files:
-        raise ValueError("No matching photos")
+        raise ValueError(
+            "No matching photos; all selected photos may already have GPS tags"
+        )
     reference = None
     if args.reference:
         reference = (
@@ -413,7 +436,11 @@ def plan(args):
             ):
                 raise ValueError(f"Photo changed since interrupted plan: {p}")
     else:
-        metadata = exif(files, all_tags=True)
+        metadata = (
+            selection_metadata
+            if selection_metadata is not None
+            else exif(files, all_tags=True)
+        )
     by_path = {Path(x["SourceFile"]): x for x in metadata}
     offset = (
         actual.astimezone(zone).replace(tzinfo=None) - captured(by_path[reference])
@@ -539,15 +566,17 @@ def plan(args):
                 metadata=by_path[p],
             )
         )
-        records[-1]["gps_reason"] = (
-            unmatched_reason(tracks, corrected, args.max_gap)
-            if records[-1]["gps"] is None
-            else None
+        records[-1]["gps"], records[-1]["gps_reason"] = match_locations(
+            tracks,
+            timeline,
+            corrected,
+            args.max_gap,
+            getattr(args, "timeline_max_gap", 600),
+            getattr(args, "stationary_radius", 50),
+            getattr(args, "stationary_max_gap", 3600),
+            position,
+            unmatched_reason,
         )
-        if timeline:
-            records[-1]["gps"], records[-1]["gps_reason"] = timeline.match(
-                corrected, args.max_gap, position, unmatched_reason
-            )
     backup.mkdir(parents=True, exist_ok=True)
     (backup / "bytes").mkdir(exist_ok=True)
     if previous:
@@ -568,6 +597,11 @@ def plan(args):
         correct_time=correct_time,
         rename=rename,
         previous_run_id=previous_run_id,
+        ignored_names=ignored_names,
+        only_missing_gps=getattr(args, "only_missing_gps", False),
+        timeline_max_gap=getattr(args, "timeline_max_gap", 600),
+        stationary_radius=getattr(args, "stationary_radius", 50),
+        stationary_max_gap=getattr(args, "stationary_max_gap", 3600),
         actual=args.actual,
         calibration_path=str(calibration_path.resolve()) if calibration_path else None,
         calibration_sha256=hash_region(
@@ -712,7 +746,7 @@ def write_args(record):
             "-GPSMapDatum=WGS-84",
             f"-GPSProcessingMethod={gps.get('processing_method', 'GPS')}",
         ]
-        if gps.get("source") == "Google Timeline rawSignals.position":
+        if gps["altitude"] is None:
             # Do not leave stale altitude or accuracy tags from an earlier track.
             args += ["-GPSAltitude=", "-GPSAltitudeRef=", "-GPSHPositioningError="]
         if gps["altitude"] is not None:
@@ -792,7 +826,7 @@ def check_metadata(record, meta):
             "processing_method", "GPS"
         ):
             raise ValueError("GPS processing method mismatch")
-        if record["gps"].get("source") == "Google Timeline rawSignals.position" and any(
+        if record["gps"]["altitude"] is None and any(
             k in meta
             for k in (
                 "GPS:GPSAltitude",
@@ -800,7 +834,7 @@ def check_metadata(record, meta):
                 "GPS:GPSHPositioningError",
             )
         ):
-            raise ValueError("Unexpected Timeline altitude or horizontal error tag")
+            raise ValueError("Unexpected altitude or horizontal error tag")
         for key, tag, ref in [
             ("lat", "GPSLatitude", "GPSLatitudeRef"),
             ("lon", "GPSLongitude", "GPSLongitudeRef"),
@@ -882,6 +916,7 @@ def apply(args):
         save(backup / "manifest.json", manifest)
     extensions = {Path(r["original"]).suffix.lower() for r in records}
     allowed_names = {r[k] for r in records for k in ["original", "stage", "target"]}
+    allowed_names.update(manifest.get("ignored_names", []))
     unexpected = [
         p.name
         for p in folder.iterdir()
@@ -903,6 +938,15 @@ def apply(args):
                 r["corrected"],
                 "matched" if r["gps"] else r["gps_reason"],
             )
+            if r["gps"]:
+                logging.info(
+                    "GPS provenance file=%s source=%s method=%s gap_seconds=%s approximate=%s",
+                    r["original"],
+                    r["gps"].get("source", "GPX"),
+                    r["gps"]["method"],
+                    r["gps"]["gap"],
+                    r["gps"].get("approximate", False),
+                )
             original, stage = folder / r["original"], folder / r["stage"]
             if original.exists():
                 if (
@@ -1170,6 +1214,29 @@ def main():
         default=60,
         help="Maximum interpolation gap in seconds; no extrapolation",
     )
+    p.add_argument(
+        "--timeline-max-gap",
+        type=float,
+        default=600,
+        help="Maximum Timeline interpolation or stationary corroboration sampling gap in seconds (default 600; use 60 for strict matching)",
+    )
+    p.add_argument(
+        "--stationary-radius",
+        type=float,
+        default=50,
+        help="Maximum observed displacement in meters for Timeline-corroborated GPX stationary gaps; 0 disables",
+    )
+    p.add_argument(
+        "--stationary-max-gap",
+        type=float,
+        default=3600,
+        help="Maximum corroborated stationary GPX gap in seconds (default 3600)",
+    )
+    p.add_argument(
+        "--only-missing-gps",
+        action="store_true",
+        help="Only process photos without coordinates, preserving already tagged files",
+    )
     p.add_argument("--extensions", default="ARW")
     p.add_argument("--prefix", default="DSC")
     p.add_argument("--digits", type=int, default=4)
@@ -1204,6 +1271,21 @@ def main():
         or getattr(args, "max_gap", 60) <= 0
     ) or getattr(args, "digits", 4) < 1:
         parser.error("max-gap and digits must be positive")
+    for name in (
+        "timeline_max_gap",
+        "stationary_max_gap",
+        "max_accuracy",
+        "stationary_radius",
+    ):
+        value = getattr(args, name, 1)
+        if (
+            not math.isfinite(value)
+            or value < 0
+            or (value == 0 and name != "stationary_radius")
+        ):
+            parser.error(
+                f"{name.replace('_', '-')} must be finite and positive (stationary-radius may be zero)"
+            )
     if not shutil.which("exiftool"):
         parser.error("Install ExifTool first: https://exiftool.org/")
     args.backup = args.backup.resolve()

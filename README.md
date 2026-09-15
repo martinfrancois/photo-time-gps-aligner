@@ -51,7 +51,7 @@ Planning reads and hashes every selected photo and writes its recovery backup. I
 
 ### Use Google Timeline
 
-Replace `--gpx` with `--timeline` for a Google device Timeline JSON export:
+Use `--timeline` for a Google device Timeline JSON export. It can also accompany `--gpx` as a fallback:
 
 ```sh
 python3 photo_time_gps.py plan /path/to/photos \
@@ -63,9 +63,33 @@ python3 photo_time_gps.py plan /path/to/photos \
 
 This supports the device export containing `rawSignals.position` with `LatLng`, `timestamp`, `accuracyMeters` and `source`. Other export formats fail with an explanation. [Google documents how to export device Timeline data](https://support.google.com/maps/answer/14169818). The parser uses timestamped measured positions; it excludes inferred visits, activity endpoints and simplified semantic paths.
 
-Only readings with a positive reported horizontal accuracy of at most `--max-accuracy` metres are accepted (default 50). Missing/invalid accuracy and malformed positions are excluded and counted in the log and manifest. Conflicting positions at the same timestamp are excluded; identical coordinates use the lowest reported error. The normal `--max-gap` limit still applies between accepted readings. A smaller reported error is preferable, but is not a guarantee of the phone's true position. Interpolation assumes movement along the path between the readings.
+Only readings with a positive reported horizontal accuracy of at most `--max-accuracy` metres are accepted (default 50). Missing/invalid accuracy and malformed positions are excluded and counted in the log and manifest. Conflicting positions at the same timestamp are excluded; identical coordinates use the lowest reported error. Timeline allows up to 600 seconds between accepted readings by default, controlled by `--timeline-max-gap`. Use `--timeline-max-gap 60` for strict matching. GPX retains its separate 60-second `--max-gap` default. Longer Timeline interpolation is an approximate route position, especially while moving. A smaller reported error is preferable, but is not a guarantee of the phone's true position. Interpolation assumes movement along the path between the readings.
 
 Each match records its contributing sources, sample timestamps and the larger reported endpoint error in the private manifest. This error is not written as the photo's GPS accuracy, since interpolation adds uncertainty. Altitude is omitted because the export does not specify its datum or vertical accuracy; stale altitude and accuracy tags are cleared when assigning a Timeline match. GPS-only measurements use the EXIF `GPS` processing method; fused or Wi-Fi measurements use `MANUAL` rather than claiming satellite-only positioning.
+
+### Fill missing geotags using both sources
+
+```sh
+python3 photo_time_gps.py plan /path/to/photos \
+  --gps-only --only-missing-gps \
+  --gpx /path/to/track.gpx \
+  --timeline /path/to/timeline-export.json \
+  --backup /path/to/gps-fill-recovery
+```
+
+`--only-missing-gps` excludes photos that already contain both latitude and longitude. Those files are not backed up, rewritten or renamed by this run. It requires GPS matching without clock correction or renaming. If every photo already has coordinates, planning stops with an explanation. A run's reports describe its selected photos, so a zero-unmatched fill report means all selected missing geotags were filled.
+
+The matching order is:
+
+1. GPX interpolation within `--max-gap`, default 60 seconds.
+2. Timeline interpolation within `--timeline-max-gap`, default 600 seconds.
+3. A stationary estimate, only when both sources support it.
+
+The stationary fallback requires a single GPX segment bracketing the photo, a gap no longer than `--stationary-max-gap` (default 3600 seconds), endpoints within `--stationary-radius` (default 50 metres), and at least three accepted Timeline observations inside the gap. Every observation must stay within that radius of the first GPX endpoint. Combining these observations with the endpoints must leave no sampling gap larger than `--timeline-max-gap`. Set `--stationary-radius 0` to disable this fallback.
+
+These are configurable tolerances for approximate geotagging, not guaranteed error bounds. Stationary estimation assumes the phone remained nearby between observations; close endpoints alone are insufficient. The fallback does not cross GPX segment breaks or extrapolate outside the track. It omits altitude and records its assumptions, sample count, observed displacement and largest unsampled interval in the private manifest. A phone recording cannot prove the camera stayed with it.
+
+The tool does not use an unconditional nearest-reading fallback. Ambiguous gaps remain unmatched with an explanation, even in the more generous mode.
 
 ### Reuse a calibration for another trip
 
@@ -107,7 +131,7 @@ A single reference measures a constant clock offset. It cannot measure clock dri
 
 GPX times are read with their UTC offsets. Positions are interpolated along a great-circle path between adjacent track points. Altitude is interpolated when both points have it. Separate track segments are never joined. Exact timestamp matches use the recorded point. There is no extrapolation before or after coverage.
 
-The default maximum gap is 60 seconds. Change it with `--max-gap`, but longer gaps can produce misleading locations, especially while traveling. Photos outside accepted coverage retain their original GPS tags. The manifest records each match's interpolation gap; `verification.json` lists unmatched filenames. Each completed plan, apply and verification also writes a UTC-timestamped `gps-unmatched-<timestamp>-<phase>.txt` file in the recovery directory. It lists final and original filenames, capture time used for matching, and the reason each photo could not be matched. A report is written even if every photo matched. Accuracy also depends on phone reception, its distance from the camera, and movement between track points. The script does not invent GPS accuracy estimates.
+The default maximum GPX gap is 60 seconds. Change it with `--max-gap`, but longer gaps can produce misleading locations, especially while traveling. Photos outside accepted coverage retain their original GPS tags. The manifest records each match's interpolation gap; `verification.json` lists unmatched filenames. Each completed plan, apply and verification also writes a UTC-timestamped `gps-unmatched-<timestamp>-<phase>.txt` file in the recovery directory. It lists final and original filenames, capture time used for matching, and the reason each photo could not be matched. A report is written even if every photo matched. Accuracy also depends on phone reception, its distance from the camera, and movement between track points. The script does not invent GPS accuracy estimates.
 
 ## Backup and recovery
 

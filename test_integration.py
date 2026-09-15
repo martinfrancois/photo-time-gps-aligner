@@ -102,6 +102,26 @@ class IntegrationTests(unittest.TestCase):
                     (photos / "unmatched.ARW").read_bytes(), originals["unmatched.ARW"]
                 )
                 self.assertTrue(Path(result["unmatched_report"]).exists())
+            # Fill only the remaining photo; keep the already tagged file byte-identical.
+            tagged = photos / "keep-this-name.ARW"
+            tagged_bytes = tagged.read_bytes()
+            gpx.write_text(
+                '<gpx><trk><trkseg><trkpt lat="10" lon="20"><time>2030-07-10T01:59:59Z</time></trkpt><trkpt lat="10" lon="20"><time>2030-07-10T02:00:01Z</time></trkpt></trkseg></trk></gpx>'
+            )
+            cli(
+                "plan",
+                photos,
+                "--gps-only",
+                "--only-missing-gps",
+                "--gpx",
+                gpx,
+                "--backup",
+                root / "fill-backup",
+            )
+            self.assertEqual(len(app.load(root / "fill-backup")["records"]), 1)
+            cli("apply", "--backup", root / "fill-backup")
+            cli("verify", "--backup", root / "fill-backup")
+            self.assertEqual(tagged.read_bytes(), tagged_bytes)
             cli(
                 "restore",
                 "--backup",
