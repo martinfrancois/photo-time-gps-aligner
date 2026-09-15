@@ -37,9 +37,11 @@ def save(path, value):
     os.replace(temp, path)
 
 
-def exif(paths, all_tags=False):
+def exif(paths, all_tags=False, gps_inventory=False):
     args = ["exiftool", "-j", "-G1", "-s", "-n", "-fast"]
-    if not all_tags:
+    if gps_inventory:
+        args += ["-fast2", "-GPSLatitude", "-GPSLongitude", "-Error", "-Warning"]
+    elif not all_tags:
         args += [
             "-DateTimeOriginal",
             "-SubSecTimeOriginal",
@@ -60,8 +62,22 @@ def exif(paths, all_tags=False):
         input="\n".join(map(str, paths)) + "\n",
         text=True,
         capture_output=True,
-        check=True,
+        check=False,
     )
+    if result.returncode:
+        details = result.stderr.strip()
+        try:
+            failures = [
+                f"{row.get('SourceFile')}: {row.get('ExifTool:Error')}"
+                for row in json.loads(result.stdout)
+                if row.get("ExifTool:Error")
+            ]
+            details += "\n" + "\n".join(failures)
+        except (ValueError, TypeError):
+            pass
+        raise ValueError(
+            f"ExifTool metadata scan failed (exit {result.returncode}): {details.strip()}"
+        )
     return json.loads(result.stdout)
 
 
@@ -393,18 +409,14 @@ def plan(args):
     ignored_names = []
     selection_metadata = None
     if getattr(args, "only_missing_gps", False):
-        selection_metadata = exif(files, all_tags=True)
+        selection_metadata = exif(files, gps_inventory=True)
         ignored_names = [
             Path(meta["SourceFile"]).name
             for meta in selection_metadata
             if "GPS:GPSLatitude" in meta and "GPS:GPSLongitude" in meta
         ]
         files = [p for p in files if p.name not in ignored_names]
-        selection_metadata = [
-            meta
-            for meta in selection_metadata
-            if Path(meta["SourceFile"]).name not in ignored_names
-        ]
+        selection_metadata = None
     if not files:
         raise ValueError(
             "No matching photos; all selected photos may already have GPS tags"
