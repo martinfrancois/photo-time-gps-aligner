@@ -5,7 +5,7 @@ import argparse
 from unittest.mock import patch
 import unittest
 
-import photo_clock_fix as fix
+import photo_time_gps as fix
 
 
 class ClockTests(unittest.TestCase):
@@ -121,6 +121,7 @@ class ClockTests(unittest.TestCase):
                 digits=4,
                 max_gap=60,
                 resume=False,
+                rename=True,
             )
             real_backup = fix.backup_one
             calls = []

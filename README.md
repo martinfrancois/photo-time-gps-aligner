@@ -1,6 +1,6 @@
-# Photo clock fix
+# Photo Time & GPS
 
-Correct a camera's clock from a photo of a trusted clock, rename RAW photos in capture order, and optionally geotag them from a phone's GPX recording.
+Match RAW photos to a GPX track, correct a camera clock when needed, and optionally rename photos in capture order. Clock correction, GPS matching and renaming can be used independently.
 
 The tool creates a compact recovery backup before editing anything. It verifies the RAW bytes, embedded previews, timestamps and GPS values as it works. A separate verification command reads the final files again.
 
@@ -15,41 +15,64 @@ Python uses only its standard library. No photos, GPX tracks or metadata are upl
 
 ## Use
 
-Take a photo of a trusted clock with the same camera clock settings as your other photos. Supply the timestamp visible in that photo, including the date, fractional seconds if available, and UTC offset. Use an IANA timezone name for the destination timezone.
+### GPS matching only
+
+If the capture times are already correct, no clock reference is needed:
 
 ```sh
-python3 photo_clock_fix.py plan /path/to/photos \
+python3 photo_time_gps.py plan /path/to/photos \
+  --gps-only \
+  --gpx /path/to/track.gpx \
+  --timezone America/Chicago \
+  --backup /path/to/photo-recovery
+```
+
+This preserves filenames and existing EXIF and Sony date/time tags, including their original precision. It preserves filesystem modification time and restores creation time on macOS when `SetFile` is available, within that tool's precision. Filesystem access and change times may reflect file processing. Unmatched photos retain their original file bytes.
+
+Existing `OffsetTimeOriginal` values determine the UTC capture instant. `--timezone` is a fallback for photos without an EXIF UTC offset and does not rewrite any date tags. It may be omitted when every photo already has an offset. Missing offsets without a fallback, ambiguous daylight-saving times and nonexistent local times cause planning to stop.
+
+### Correct the clock, optionally match GPS and rename
+
+Take a photo of a trusted clock with unchanged camera settings. Supply its real timestamp with an explicit UTC offset:
+
+```sh
+python3 photo_time_gps.py plan /path/to/photos \
   --reference DSC01234.ARW \
   --actual '2030-07-09T22:54:33.27-05:00' \
   --timezone America/Chicago \
   --gpx /path/to/track.gpx \
+  --rename \
   --backup /path/to/photo-recovery
 ```
 
-Omit `--gpx` when you have no track. This leaves existing GPS tags unchanged. Planning reads and hashes every photo and writes the recovery backup. It does not change the photos. The backup folder must be new.
+Supply `--reference` and `--actual` together to enable clock correction. Omit both to preserve the clock. Omit `--gpx` when no track is available. Add `--rename` only when sequential filenames are wanted. `--gps-only` explicitly forbids clock correction and renaming; simply supplying `--gpx` without those operations has the same effect.
+
+Planning reads and hashes every selected photo and writes its recovery backup. It does not change the photos. Use a new backup directory for each run.
+
+### Apply and verify
 
 Inspect the reported clock correction and match count, then apply the saved plan:
 
 ```sh
-python3 photo_clock_fix.py apply --backup /path/to/photo-recovery
-python3 photo_clock_fix.py verify --backup /path/to/photo-recovery
+python3 photo_time_gps.py apply --backup /path/to/photo-recovery
+python3 photo_time_gps.py verify --backup /path/to/photo-recovery
 ```
 
-Default names are `DSC0001.ARW`, `DSC0002.ARW`, and so on. Width expands beyond four digits if needed. Photos with equal capture times use the Sony shutter counter when available for every photo, which preserves burst order across filename counter rollovers. Otherwise they use natural filename order. Mixed detected camera identities are rejected. `--prefix`, `--digits` and `--extensions` customize selection and naming. Selection includes only matching files directly in the folder. Other files and subfolders are untouched.
+With `--rename`, names are `DSC0001.ARW`, `DSC0002.ARW`, and so on. Width expands beyond four digits if needed. Photos with equal capture times use the Sony shutter counter when available for every photo, which preserves burst order across filename counter rollovers. Otherwise they use natural filename order. Clock correction rejects mixed detected camera identities. `--prefix`, `--digits` and `--extensions` customize selection and naming. Selection includes only matching files directly in the folder. Other files and subfolders are untouched.
 
 `apply` uses two concurrent workers by default. Set `--workers 1` for sequential processing or choose up to eight workers for faster storage.
 
-`apply` can be run again after interruption or completion. Its journal prevents double correction. A folder marker prevents accidentally planning another correction on processed photos. Keep the marker and recovery directory until you are finished with the work. Do not run concurrent commands against the same folder or modify photos during a run.
+`apply` can be run again after interruption or completion. Its journal prevents double correction. A folder marker prevents accidentally repeating clock correction or renaming. GPS-only matching can be run again on a previously processed folder once its earlier run is complete; use a new recovery directory. Each run retains its own backup and report. Keep the marker and recovery directory until you are finished with the work. Do not run concurrent commands against the same folder or modify photos during a run.
 
 ## Time and GPS accuracy
 
-The offset is the difference between the reference photo's stored camera time and the supplied real local time. The script corrects EXIF capture, digitization and modification dates, Sony capture time when present, fractional seconds, UTC offsets and filesystem modification time. It preserves the original date/time values in the recovery manifest. On macOS, creation time is also corrected when the `SetFile` tool is available. Original creation times are saved for restoration. Other platforms retain their native creation-time behavior.
+The offset is the difference between the reference photo's stored camera time and the supplied real local time. When clock correction is enabled, the script corrects EXIF capture, digitization and modification dates, Sony capture time when present, fractional seconds, UTC offsets and filesystem modification time. It preserves the original date/time values in the recovery manifest. On macOS, creation time is also corrected when the `SetFile` tool is available. Original creation times are saved for restoration. Other platforms retain their native creation-time behavior.
 
-A single reference measures a constant clock offset. It cannot measure clock drift or recover subsecond capture times the camera did not record. A reference timestamp with hundredths does not make every other photo accurate to a hundredth. Use separate runs if the camera's clock settings changed. The script rejects photos spanning a destination daylight-saving offset change.
+A single reference measures a constant clock offset. It cannot measure clock drift or recover subsecond capture times the camera did not record. A reference timestamp with hundredths does not make every other photo accurate to a hundredth. Use separate runs if the camera's clock settings changed. Clock correction rejects photos spanning a destination daylight-saving offset change. GPS-only matching can cross such transitions when the capture instants are unambiguous.
 
 GPX times are read with their UTC offsets. Positions are interpolated along a great-circle path between adjacent track points. Altitude is interpolated when both points have it. Separate track segments are never joined. Exact timestamp matches use the recorded point. There is no extrapolation before or after coverage.
 
-The default maximum gap is 60 seconds. Change it with `--max-gap`, but longer gaps can produce misleading locations, especially while traveling. Photos outside accepted coverage retain their original GPS tags. The manifest records each match's interpolation gap; `verification.json` lists unmatched filenames. Each completed plan, apply and verification also writes a UTC-timestamped `gps-unmatched-<timestamp>-<phase>.txt` file in the recovery directory. It lists final and original filenames, corrected capture time, and the reason each photo could not be matched. A report is written even if every photo matched. Accuracy also depends on phone reception, its distance from the camera, and movement between track points. The script does not invent GPS accuracy estimates.
+The default maximum gap is 60 seconds. Change it with `--max-gap`, but longer gaps can produce misleading locations, especially while traveling. Photos outside accepted coverage retain their original GPS tags. The manifest records each match's interpolation gap; `verification.json` lists unmatched filenames. Each completed plan, apply and verification also writes a UTC-timestamped `gps-unmatched-<timestamp>-<phase>.txt` file in the recovery directory. It lists final and original filenames, capture time used for matching, and the reason each photo could not be matched. A report is written even if every photo matched. Accuracy also depends on phone reception, its distance from the camera, and movement between track points. The script does not invent GPS accuracy estimates.
 
 ## Backup and recovery
 
@@ -60,7 +83,7 @@ This is a compact **metadata-edit recovery backup**, not an independent backup o
 Restore original names, original file bytes and modification times to a separate directory:
 
 ```sh
-python3 photo_clock_fix.py restore \
+python3 photo_time_gps.py restore \
   --backup /path/to/photo-recovery \
   --output /path/to/restored-originals
 ```
@@ -84,17 +107,21 @@ Do not delete an incomplete backup and assume work succeeded. If planning is int
 
 ```sh
 python3 -m unittest -v
-python3 -m compileall -q photo_clock_fix.py
+python3 -m compileall -q photo_time_gps.py
 # Optional style checks in a development virtual environment:
 python3 -m pip install -r requirements-dev.txt
 ruff check .
 ruff format --check .
 ```
 
-Tests use synthetic data. For integration testing, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples or real tracks.
+Tests use synthetic data. With ExifTool installed, the integration test exercises GPS-only planning, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures. For integration testing, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples or real tracks.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under MIT.
 
 ## Sony RAW layout warnings
 
 ExifTool may log `[minor] Oversized SubIFD StripByteCounts` for some Sony ARW files. Its author identifies this as a [known ARW issue](https://exiftool.org/forum/index.php?topic=17663.0). The script keeps the warning in the log and still requires unchanged RAW and preview hashes, preserved unrelated metadata, and byte-exact reconstruction of the original. Investigate any new or different warning rather than suppressing warnings globally.
+
+## Earlier versions
+
+The project was previously named Photo clock fix. `photo_clock_fix.py` remains a compatibility entry point for the new CLI. Existing recovery manifests and folder markers remain readable. Renaming is now opt-in with `--rename`, including through the compatibility entry point. Archived scripts in existing recovery folders are left unchanged.
