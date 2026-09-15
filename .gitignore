@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+*.ARW
+*.arw
+*.gpx
+*.jpg
+*.JPG
+*.dng
+*.DNG
+*.gz
+*.log
+manifest.json
+state.json
+verification.json
+.photo-clock-fix.json
