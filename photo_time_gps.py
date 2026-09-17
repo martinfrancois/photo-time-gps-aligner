@@ -165,9 +165,18 @@ def backup_one(path, meta, destination):
     )
 
 
+class TrackSegments(list):
+    """Track segments plus recorder provenance for source-specific gap policies."""
+
+    def __init__(self, segments=(), creator="", gap_policy="auto"):
+        super().__init__(segments)
+        self.creator = creator
+        self.gap_policy = gap_policy
+
+
 def load_track(path):
-    tracks = []
     root = ET.parse(path).getroot()
+    tracks = TrackSegments(creator=root.get("creator", ""))
     for segment in root.findall(".//{*}trkseg"):
         points = []
         for p in segment.findall("{*}trkpt"):
@@ -506,6 +515,8 @@ def plan(args):
     if timeline:
         logging.info("Timeline sample filtering: %s", dict(timeline.stats))
     tracks = load_track(args.gpx) if args.gpx else []
+    if args.gpx:
+        tracks.gap_policy = getattr(args, "gpx_gap_policy", "auto")
 
     def natural(p):
         return [
@@ -612,6 +623,8 @@ def plan(args):
         ignored_names=ignored_names,
         only_missing_gps=getattr(args, "only_missing_gps", False),
         timeline_max_gap=getattr(args, "timeline_max_gap", 600),
+        gpx_gap_policy=getattr(args, "gpx_gap_policy", "auto"),
+        gpx_creator=tracks.creator if args.gpx else None,
         stationary_radius=getattr(args, "stationary_radius", 50),
         stationary_max_gap=getattr(args, "stationary_max_gap", 3600),
         actual=args.actual,
@@ -1230,19 +1243,25 @@ def main():
         "--timeline-max-gap",
         type=float,
         default=600,
-        help="Maximum Timeline interpolation or stationary corroboration sampling gap in seconds (default 600; use 60 for strict matching)",
+        help="Maximum Timeline interpolation gap in seconds (default 600; use 60 for strict matching)",
+    )
+    p.add_argument(
+        "--gpx-gap-policy",
+        choices=["auto", "strict", "stationary"],
+        default="auto",
+        help="auto estimates stop-like gaps for Geo Tracker; strict disables GPX stop estimates; stationary enables them for other known movement-filtered recorders",
     )
     p.add_argument(
         "--stationary-radius",
         type=float,
         default=50,
-        help="Maximum observed displacement in meters for Timeline-corroborated GPX stationary gaps; 0 disables",
+        help="Maximum distance from estimated stop center to either GPX endpoint in meters; 0 disables",
     )
     p.add_argument(
         "--stationary-max-gap",
         type=float,
         default=3600,
-        help="Maximum corroborated stationary GPX gap in seconds (default 3600)",
+        help="Maximum GPX stop-estimate gap in seconds (default 3600)",
     )
     p.add_argument(
         "--only-missing-gps",

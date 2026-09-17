@@ -83,13 +83,28 @@ The matching order is:
 
 1. GPX interpolation within `--max-gap`, default 60 seconds.
 2. Timeline interpolation within `--timeline-max-gap`, default 600 seconds.
-3. A stationary estimate, only when both sources support it.
+3. A GPX stop estimate when the recorder and geometry support it. Timeline is **not required**.
 
-The stationary fallback requires a single GPX segment bracketing the photo, a gap no longer than `--stationary-max-gap` (default 3600 seconds), endpoints within `--stationary-radius` (default 50 metres), and at least three accepted Timeline observations inside the gap. Every observation must stay within that radius of the first GPX endpoint. Combining these observations with the endpoints must leave no sampling gap larger than `--timeline-max-gap`. Set `--stationary-radius 0` to disable this fallback.
+Geo Tracker intentionally filters recorded points by movement and other settings. Its pauses can appear as one gap or several consecutive gaps; a waypoint may mark the start, middle or end of a pause. [Geo Tracker documents its recording filters](https://geo-tracker.org/en/faq). A gap alone does not establish that the phone stayed stationary.
 
-These are configurable tolerances for approximate geotagging, not guaranteed error bounds. Stationary estimation assumes the phone remained nearby between observations; close endpoints alone are insufficient. The fallback does not cross GPX segment breaks or extrapolate outside the track. It omits altitude and records its assumptions, sample count, observed displacement and largest unsampled interval in the private manifest. A phone recording cannot prove the camera stayed with it.
+With `--gpx-gap-policy auto` (the default), the GPX creator field must identify Geo Tracker to enable standalone stop estimates. `--gpx-gap-policy strict` disables them; `--gpx-gap-policy stationary` explicitly enables them for another recorder known to filter stationary points. Generic GPX tracks otherwise retain strict interpolation.
 
-The tool does not use an unconditional nearest-reading fallback. Ambiguous gaps remain unmatched with an explanation, even in the more generous mode.
+A stop estimate requires two points in the same segment, a gap no longer than `--stationary-max-gap` (default 3600 seconds), and both endpoints within `--stationary-radius` (default 50 metres) of their great-circle midpoint. This is a radius, so endpoints may be up to 100 metres apart. Set `--stationary-radius 0` to disable estimates. The estimate holds that midpoint fixed throughout the gap, instead of inventing movement between GPS readings. Altitude is omitted.
+
+These are configurable tolerances for **approximate geotagging**, not guarantees or a count of actual stops. Nearby endpoints cannot rule out an unrecorded excursion or a GPS outage. The manifest records the assumption, recorder, gap, endpoint timestamps and observed radius; observed radius is not written as GPS accuracy. Unknown gaps outside these limits remain unmatched. Segment breaks and track boundaries are never bridged by stop estimates.
+
+You can supply either GPX or Timeline alone. When both are present, recorded GPX matches take priority, Timeline fills GPX gaps, and GPX stop estimates remain available where Timeline has no usable match. Accepted Timeline observations that fall outside the proposed stop radius veto the estimate. A missing Timeline reading never prevents an otherwise eligible Geo Tracker estimate.
+
+### Check annotated stops against a recording
+
+The read-only audit helper compares GPX waypoints named `Stop for ~N min` with adjacent recording gaps:
+
+```sh
+python3 audit_stops.py /path/to/recording.gpx \
+  --output /path/to/stop-comparison.json
+```
+
+It reports gaps on either side of each marker and exercises the same GPX-only matching function used by photo processing. Approximate waypoint labels are validation references, not exact start/end times, and are never used automatically to geotag photos. The audit also lists unmarked long gaps; these are unconfirmed rather than proven stops or movement. Keep reports private because they contain trip timestamps.
 
 ### Reuse a calibration for another trip
 

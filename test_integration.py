@@ -106,7 +106,7 @@ class IntegrationTests(unittest.TestCase):
             tagged = photos / "keep-this-name.ARW"
             tagged_bytes = tagged.read_bytes()
             gpx.write_text(
-                '<gpx><trk><trkseg><trkpt lat="10" lon="20"><time>2030-07-10T01:59:59Z</time></trkpt><trkpt lat="10" lon="20"><time>2030-07-10T02:00:01Z</time></trkpt></trkseg></trk></gpx>'
+                '<gpx creator="Recorded in Geo Tracker for Android"><trk><trkseg><trkpt lat="10" lon="20"><time>2030-07-10T01:57:00Z</time></trkpt><trkpt lat="10" lon="20"><time>2030-07-10T02:03:00Z</time></trkpt></trkseg></trk></gpx>'
             )
             cli(
                 "plan",
@@ -119,6 +119,10 @@ class IntegrationTests(unittest.TestCase):
                 root / "fill-backup",
             )
             self.assertEqual(len(app.load(root / "fill-backup")["records"]), 1)
+            self.assertEqual(
+                app.load(root / "fill-backup")["records"][0]["gps"]["method"],
+                "stationary_estimate",
+            )
             cli("apply", "--backup", root / "fill-backup")
             cli("verify", "--backup", root / "fill-backup")
             self.assertEqual(tagged.read_bytes(), tagged_bytes)

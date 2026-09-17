@@ -1,7 +1,9 @@
-"""Match measured tracks, with explicit evidence for stationary gaps."""
+"""Match GPX or Timeline, including optional recorder-specific stop estimates."""
 
 import bisect
 import math
+import re
+import datetime as dt
 
 
 def distance(p, q):
@@ -11,6 +13,50 @@ def distance(p, q):
         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
     )
     return 12742000 * math.asin(min(1, math.sqrt(h)))
+
+
+def stationary_estimate(tracks, instant, radius, max_gap, interpolate):
+    policy = getattr(tracks, "gap_policy", "auto")
+    creator = getattr(tracks, "creator", "")
+    enabled = policy == "stationary" or (
+        policy == "auto" and re.search(r"\bgeo\s*tracker\b", creator, re.IGNORECASE)
+    )
+    if not enabled or radius <= 0:
+        return None
+    t = instant.timestamp()
+    for segment in tracks:
+        i = bisect.bisect_left([p[0] for p in segment], t)
+        if not 0 < i < len(segment):
+            continue
+        left, right = segment[i - 1 : i + 1]
+        gap = right[0] - left[0]
+        separation = distance(left, right)
+        if gap > max_gap or separation > 2 * radius:
+            continue
+        # A fixed great-circle midpoint avoids inventing motion during a stop.
+        center_time = dt.datetime.fromtimestamp(
+            (left[0] + right[0]) / 2, dt.timezone.utc
+        )
+        result = interpolate([[left, right]], center_time, max_gap)
+        result.update(
+            method="stationary_estimate",
+            source="GPX stop estimate",
+            processing_method="MANUAL",
+            altitude=None,
+            approximate=True,
+            recorder=creator,
+            gpx_gap_policy=policy,
+            endpoint_distance_meters=separation,
+            observed_radius_meters=separation / 2,
+            stationary_radius_meters=radius,
+            sample_times_utc=[
+                dt.datetime.fromtimestamp(p[0], dt.timezone.utc).isoformat()
+                for p in [left, right]
+            ],
+            assumption="Continuous movement-filtered recording; nearby endpoints suggest a stop but cannot rule out an unrecorded excursion. Observed radius is not a GPS accuracy bound.",
+        )
+        return result
+    return None
 
 
 def match(
@@ -36,46 +82,30 @@ def match(
             return result, None
     else:
         why = reason(tracks, instant, max_gap)
-    if not tracks or not timeline or stationary_radius <= 0:
-        return None, why
-    t = instant.timestamp()
-    for segment in tracks:
-        i = bisect.bisect_left([p[0] for p in segment], t)
-        if not 0 < i < len(segment):
-            continue
-        left, right = segment[i - 1 : i + 1]
-        gap = right[0] - left[0]
-        if gap > stationary_gap or distance(left, right) > stationary_radius:
-            continue
-        evidence = timeline.tracks[0][
-            bisect.bisect_right(timeline.times, left[0]) : bisect.bisect_left(
-                timeline.times, right[0]
-            )
-        ]
-        if len(evidence) < 3:
-            continue
-        excursion = max(distance(left, p) for p in evidence)
-        observations = [left, *evidence, right]
-        unseen = max(b[0] - a[0] for a, b in zip(observations, observations[1:]))
-        if excursion > stationary_radius or unseen > timeline_gap:
-            continue
-        result = interpolate([[left, right]], instant, stationary_gap)
-        result.update(
-            method="stationary_estimate",
-            source="GPX corroborated by Google Timeline",
-            processing_method="MANUAL",
-            altitude=None,
-            approximate=True,
-            corroborating_samples=len(evidence),
-            max_excursion_meters=excursion,
-            endpoint_distance_meters=distance(left, right),
-            largest_unsampled_gap_seconds=unseen,
-            stationary_radius_meters=stationary_radius,
-            assumption="Phone stayed near the observed stationary positions between samples",
-        )
+    result = stationary_estimate(
+        tracks, instant, stationary_radius, stationary_gap, interpolate
+    )
+    if result:
+        if timeline:
+            start, end = [
+                dt.datetime.fromisoformat(t).timestamp()
+                for t in result["sample_times_utc"]
+            ]
+            evidence = timeline.tracks[0][
+                bisect.bisect_left(timeline.times, start) : bisect.bisect_right(
+                    timeline.times, end
+                )
+            ]
+            center = (instant.timestamp(), result["lat"], result["lon"], None)
+            if any(distance(center, p) > stationary_radius for p in evidence):
+                return (
+                    None,
+                    why + " Timeline observations contradict the GPX stop estimate.",
+                )
+            result["optional_timeline_observations"] = len(evidence)
         return result, None
     return (
         None,
         why
-        + " Stationary fallback lacked close GPX endpoints and sufficient nearby Timeline observations.",
+        + " GPX stop estimate disabled, outside a segment, or beyond its spatial/time limits.",
     )

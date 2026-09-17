@@ -31,3 +31,7 @@ gps-unmatched-*.txt
 Timeline*.json
 timeline-export*.json
 location-history*.json
+
+# Private stop-validation output
+stop-comparison.json
+validation-report.*
