@@ -45,6 +45,8 @@ python3 photo_time_gps.py plan /path/to/photos \
   --backup /path/to/photo-recovery
 ```
 
+Repeat `--gpx` to use multiple recordings in one run, for example `--gpx day-one.gpx --gpx day-two.gpx`. Files retain separate track segments and recorder policies. Recorded matches from any GPX take priority over Timeline and stop estimates; overlapping recorded matches use the first supplied file. The manifest records the source file for each GPX match.
+
 Supply `--reference` and `--actual` together to enable clock correction. Omit both to preserve the clock. Omit `--gpx` when no track is available. Add `--rename` only when sequential filenames are wanted. `--gps-only` explicitly forbids clock correction and renaming; simply supplying `--gpx` without those operations has the same effect.
 
 Planning reads and hashes every selected photo and writes its recovery backup. It does not change the photos. Use a new backup directory for each run.

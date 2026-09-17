@@ -80,7 +80,18 @@ class IntegrationTests(unittest.TestCase):
 
             for name in ["first-backup", "second-backup"]:
                 backup = root / name
-                cli("plan", photos, "--gps-only", "--gpx", gpx, "--backup", backup)
+                cli(
+                    "plan",
+                    photos,
+                    "--gps-only",
+                    "--gpx",
+                    gpx,
+                    "--gpx",
+                    gpx,
+                    "--backup",
+                    backup,
+                )
+                self.assertEqual(len(app.load(backup)["gpx_sources"]), 2)
                 manifest = app.load(backup)
                 self.assertFalse(manifest["correct_time"])
                 self.assertFalse(manifest["rename"])

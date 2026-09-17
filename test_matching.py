@@ -38,6 +38,36 @@ class GapTests(unittest.TestCase):
             a.unmatched_reason,
         )
 
+    def test_multiple_files_keep_boundaries_and_recorder_policies(self):
+        with tempfile.TemporaryDirectory() as directory:
+
+            def track(name, creator, start, end):
+                path = Path(directory) / name
+                points = "".join(
+                    f'<trkpt lat="0" lon="0"><time>{(self.start + dt.timedelta(seconds=t)).isoformat()}</time></trkpt>'
+                    for t in [start, end]
+                )
+                path.write_text(
+                    f'<gpx creator="{creator}"><trk><trkseg>{points}</trkseg></trk></gpx>'
+                )
+                return path
+
+            first = track("first.gpx", "Geo Tracker", 0, 300)
+            second = track("second.gpx", "Generic recorder", 310, 610)
+            tracks = a.load_tracks([first, second])
+            result, _ = self.match(tracks, 150)
+            self.assertEqual(result["method"], "stationary_estimate")
+            self.assertEqual(result["gpx_path"], str(first.resolve()))
+            self.assertIsNone(self.match(tracks, 305)[0])
+            self.assertIsNone(self.match(tracks, 450)[0])
+            self.assertEqual(
+                self.match(tracks, 610)[0]["gpx_path"], str(second.resolve())
+            )
+            overlapping = track("recorded.gpx", "Generic recorder", 140, 160)
+            result, _ = self.match(a.load_tracks([first, overlapping]), 150)
+            self.assertEqual(result["source"], "GPX")
+            self.assertEqual(result["gpx_path"], str(overlapping.resolve()))
+
     def test_five_observed_stop_gap_patterns_without_timeline(self):
         # Durations/displacements observed around five annotated stops; synthetic coordinates.
         for seconds, separation in [

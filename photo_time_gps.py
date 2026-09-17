@@ -208,6 +208,19 @@ def load_track(path):
     return tracks
 
 
+def load_tracks(paths, gap_policy="auto"):
+    """Combine files without joining segments or losing each recorder's policy."""
+    sources = []
+    for path in paths:
+        source = load_track(path)
+        source.gap_policy = gap_policy
+        source.path = str(path.resolve())
+        sources.append(source)
+    tracks = TrackSegments(segment for source in sources for segment in source)
+    tracks.sources = sources
+    return tracks
+
+
 def position(tracks, instant, max_gap):
     t = instant.timestamp()
     for points in tracks:
@@ -343,7 +356,10 @@ def plan(args):
     folder, backup = args.folder.resolve(), args.backup.resolve()
     calibration_path = getattr(args, "calibration", None)
     timeline_path = getattr(args, "timeline", None)
-    location_path = args.gpx or timeline_path
+    gpx_paths = args.gpx or []
+    if isinstance(gpx_paths, Path):
+        gpx_paths = [gpx_paths]
+    location_path = gpx_paths or timeline_path
 
     if calibration_path and (args.reference or args.actual):
         raise ValueError(
@@ -514,9 +530,7 @@ def plan(args):
     )
     if timeline:
         logging.info("Timeline sample filtering: %s", dict(timeline.stats))
-    tracks = load_track(args.gpx) if args.gpx else []
-    if args.gpx:
-        tracks.gap_policy = getattr(args, "gpx_gap_policy", "auto")
+    tracks = load_tracks(gpx_paths, getattr(args, "gpx_gap_policy", "auto"))
 
     def natural(p):
         return [
@@ -624,7 +638,15 @@ def plan(args):
         only_missing_gps=getattr(args, "only_missing_gps", False),
         timeline_max_gap=getattr(args, "timeline_max_gap", 600),
         gpx_gap_policy=getattr(args, "gpx_gap_policy", "auto"),
-        gpx_creator=tracks.creator if args.gpx else None,
+        gpx_creator=tracks.sources[0].creator if len(gpx_paths) == 1 else None,
+        gpx_sources=[
+            dict(
+                path=source.path,
+                creator=source.creator,
+                sha256=hash_region(path, 0, path.stat().st_size),
+            )
+            for path, source in zip(gpx_paths, tracks.sources)
+        ],
         stationary_radius=getattr(args, "stationary_radius", 50),
         stationary_max_gap=getattr(args, "stationary_max_gap", 3600),
         actual=args.actual,
@@ -642,12 +664,12 @@ def plan(args):
         timeline_stats=dict(timeline.stats) if timeline else None,
         max_accuracy=getattr(args, "max_accuracy", 50),
         offset_seconds=offset.total_seconds() if drift is None else None,
-        gpx_path=str(args.gpx.resolve()) if args.gpx else None,
+        gpx_path=str(gpx_paths[0].resolve()) if len(gpx_paths) == 1 else None,
         exiftool_version=subprocess.check_output(
             ["exiftool", "-ver"], text=True
         ).strip(),
-        gpx_sha256=hash_region(args.gpx, 0, args.gpx.stat().st_size)
-        if args.gpx
+        gpx_sha256=hash_region(gpx_paths[0], 0, gpx_paths[0].stat().st_size)
+        if len(gpx_paths) == 1
         else None,
         max_gap=args.max_gap,
         tie_breaker="Sony:ShutterCount" if use_shutter else "natural filename",
@@ -1206,7 +1228,12 @@ def main():
         "--timezone",
         help="IANA timezone: required for clock correction, otherwise a fallback for missing EXIF offsets",
     )
-    p.add_argument("--gpx", type=Path)
+    p.add_argument(
+        "--gpx",
+        type=Path,
+        action="append",
+        help="GPX recording; repeat for multiple files",
+    )
     p.add_argument(
         "--timeline",
         type=Path,

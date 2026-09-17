@@ -70,10 +70,13 @@ def match(
     interpolate,
     reason,
 ):
-    if tracks:
-        result = interpolate(tracks, instant, max_gap)
+    sources = getattr(tracks, "sources", [tracks])
+    for source in sources:
+        result = interpolate(source, instant, max_gap)
         if result:
             result["source"] = "GPX"
+            if hasattr(source, "path"):
+                result["gpx_path"] = source.path
             return result, None
     if timeline:
         result, why = timeline.match(instant, timeline_gap, interpolate, reason)
@@ -82,9 +85,15 @@ def match(
             return result, None
     else:
         why = reason(tracks, instant, max_gap)
-    result = stationary_estimate(
-        tracks, instant, stationary_radius, stationary_gap, interpolate
-    )
+    result = None
+    for source in sources:
+        result = stationary_estimate(
+            source, instant, stationary_radius, stationary_gap, interpolate
+        )
+        if result:
+            if hasattr(source, "path"):
+                result["gpx_path"] = source.path
+            break
     if result:
         if timeline:
             start, end = [
