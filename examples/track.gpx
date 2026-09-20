@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Synthetic example for photo-time-gps" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Invented two-minute walk</name>
+    <trkseg>
+      <trkpt lat="10.0000" lon="20.0000"><ele>100</ele><time>2030-07-10T00:58:00Z</time></trkpt>
+      <trkpt lat="10.0001" lon="20.0001"><ele>101</ele><time>2030-07-10T00:58:30Z</time></trkpt>
+      <trkpt lat="10.0002" lon="20.0002"><ele>102</ele><time>2030-07-10T00:59:00Z</time></trkpt>
+      <trkpt lat="10.0003" lon="20.0003"><ele>103</ele><time>2030-07-10T00:59:30Z</time></trkpt>
+      <trkpt lat="10.0004" lon="20.0004"><ele>104</ele><time>2030-07-10T01:00:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

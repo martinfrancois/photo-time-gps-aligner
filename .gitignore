@@ -4,6 +4,7 @@ __pycache__/
 *.ARW
 *.arw
 *.gpx
+!examples/*.gpx
 *.jpg
 *.JPG
 *.dng
@@ -35,3 +36,13 @@ location-history*.json
 # Private stop-validation output
 stop-comparison.json
 validation-report.*
+
+# Virtual environments and editors
+.venv/
+venv/
+.idea/
+.vscode/
+*.swp
+
+# Output of the documented synthetic example
+output/
