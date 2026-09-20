@@ -1,19 +1,32 @@
 # Photo Time & GPS
 
-Match RAW photos to a GPX track or Google Timeline export, correct a camera clock when needed, and optionally rename photos in capture order. Clock correction, GPS matching and renaming can be used independently.
+Correct a RAW camera clock, geotag photos from a GPX track or a Google Timeline export, and rename them in capture order, with a verified recovery backup of every metadata edit.
 
-The tool creates a compact recovery backup before editing anything. It verifies the RAW bytes, embedded previews, timestamps and GPS values as it works. A separate verification command reads the final files again.
+## What it does
+
+`plan` reads the EXIF of every RAW file in a folder, computes the clock correction from one reference photo, matches each corrected capture time to a position on the track, and writes a compact recovery backup without touching the photos. `apply` writes the new timestamps and GPS tags with ExifTool, checks every rewritten file against the backup, and renames the files if asked. `verify` reads the finished files again. `restore` rebuilds the original bytes into a separate folder. Clock correction, GPS matching and renaming can be used independently.
+
+The tool verifies the RAW bytes, embedded previews, timestamps and GPS values as it works.
 
 ## Requirements
 
-- macOS or Linux, with Python 3.10 or later and the IANA timezone database.
-- [ExifTool](https://exiftool.org/). On macOS, install it with `brew install exiftool`.
+- Linux or macOS. Python's `zoneinfo` needs the system timezone database, which is the `tzdata` package on minimal Linux images. Windows is not supported because the recovery-directory lock uses `fcntl`.
+- Python 3.12 and ExifTool 12.76 are the versions CI tests on Ubuntu 24.04. The test suite also passes on Python 3.13. macOS is not covered by CI, so creation-time handling through `SetFile` is untested there.
 - RAW files with one contiguous `SubIFD` image strip. Tested with Sony ARW. Unsupported layouts stop during planning, before edits.
 - Free disk space for compressed metadata backups and one temporary RAW file per worker.
 
 Python uses only its standard library. No photos, location exports or metadata are uploaded.
 
-## Use
+## Install
+
+```sh
+git clone https://github.com/martinfrancois/photo-time-gps.git
+cd photo-time-gps
+```
+
+Install ExifTool with `sudo apt-get install libimage-exiftool-perl` on Debian and Ubuntu, `brew install exiftool` on macOS, or follow the [ExifTool install page](https://exiftool.org/install.html). Run the scripts from the clone with `python3`. There is nothing else to install.
+
+## Usage
 
 ### GPS matching only
 
@@ -85,7 +98,7 @@ The matching order is:
 
 1. GPX interpolation within `--max-gap`, default 60 seconds.
 2. Timeline interpolation within `--timeline-max-gap`, default 600 seconds.
-3. A GPX stop estimate when the recorder and geometry support it. Timeline is **not required**.
+3. A GPX stop estimate when the recorder and geometry support it. Timeline is not required.
 
 Geo Tracker intentionally filters recorded points by movement and other settings. Its pauses can appear as one gap or several consecutive gaps; a waypoint may mark the start, middle or end of a pause. [Geo Tracker documents its recording filters](https://geo-tracker.org/en/faq). A gap alone does not establish that the phone stayed stationary.
 
@@ -93,7 +106,7 @@ With `--gpx-gap-policy auto` (the default), the GPX creator field must identify 
 
 A stop estimate requires two points in the same segment, a gap no longer than `--stationary-max-gap` (default 3600 seconds), and both endpoints within `--stationary-radius` (default 50 metres) of their great-circle midpoint. This is a radius, so endpoints may be up to 100 metres apart. Set `--stationary-radius 0` to disable estimates. The estimate holds that midpoint fixed throughout the gap, instead of inventing movement between GPS readings. Altitude is omitted.
 
-These are configurable tolerances for **approximate geotagging**, not guarantees or a count of actual stops. Nearby endpoints cannot rule out an unrecorded excursion or a GPS outage. The manifest records the assumption, recorder, gap, endpoint timestamps and observed radius; observed radius is not written as GPS accuracy. Unknown gaps outside these limits remain unmatched. Segment breaks and track boundaries are never bridged by stop estimates.
+These are configurable tolerances for approximate geotagging, not guarantees or a count of actual stops. Nearby endpoints cannot rule out an unrecorded excursion or a GPS outage. The manifest records the assumption, recorder, gap, endpoint timestamps and observed radius; observed radius is not written as GPS accuracy. Unknown gaps outside these limits remain unmatched. Segment breaks and track boundaries are never bridged by stop estimates.
 
 You can supply either GPX or Timeline alone. When both are present, recorded GPX matches take priority, Timeline fills GPX gaps, and GPX stop estimates remain available where Timeline has no usable match. Accepted Timeline observations that fall outside the proposed stop radius veto the estimate. A missing Timeline reading never prevents an otherwise eligible Geo Tracker estimate.
 
@@ -140,7 +153,7 @@ With `--rename`, names are `DSC0001.ARW`, `DSC0002.ARW`, and so on. Width expand
 
 `apply` can be run again after interruption or completion. Its journal prevents double correction. A folder marker prevents accidentally repeating clock correction or renaming. GPS-only matching can be run again on a previously processed folder once its earlier run is complete; use a new recovery directory. Each run retains its own backup and report. Keep the marker and recovery directory until you are finished with the work. Do not run concurrent commands against the same folder or modify photos during a run.
 
-## Time and GPS accuracy
+### Time and GPS accuracy
 
 The offset is the difference between the reference photo's stored camera time and the supplied real local time. When clock correction is enabled, the script corrects EXIF capture, digitization and modification dates, Sony capture time when present, fractional seconds, UTC offsets and filesystem modification time. It preserves the original date/time values in the recovery manifest. On macOS, creation time is also corrected when the `SetFile` tool is available. Original creation times are saved for restoration. Other platforms retain their native creation-time behavior.
 
@@ -150,11 +163,11 @@ GPX times are read with their UTC offsets. Positions are interpolated along a gr
 
 The default maximum GPX gap is 60 seconds. Change it with `--max-gap`, but longer gaps can produce misleading locations, especially while traveling. Photos outside accepted coverage retain their original GPS tags. The manifest records each match's interpolation gap; `verification.json` lists unmatched filenames. Each completed plan, apply and verification also writes a UTC-timestamped `gps-unmatched-<timestamp>-<phase>.txt` file in the recovery directory. It lists final and original filenames, capture time used for matching, and the reason each photo could not be matched. A report is written even if every photo matched. Accuracy also depends on phone reception, its distance from the camera, and movement between track points. The script does not invent GPS accuracy estimates.
 
-## Backup and recovery
+### Backup and recovery
 
 Each backup stores every original byte except the large RAW image strip. It records SHA-256 hashes of the entire original file, the RAW strip and embedded previews. Restoration combines the saved bytes with the unchanged RAW strip and must match the original full-file SHA-256.
 
-This is a compact **metadata-edit recovery backup**, not an independent backup of your photos. Keep a separate photo backup to protect against drive loss, deletion or later corruption of the RAW data. Recovery files include private metadata and embedded previews; keep them private.
+This is a compact metadata-edit recovery backup, not an independent backup of your photos. Keep a separate photo backup to protect against drive loss, deletion or later corruption of the RAW data. Recovery files include private metadata and embedded previews; keep them private.
 
 Restore original names, original file bytes and modification times to a separate directory:
 
@@ -175,29 +188,58 @@ The run directory contains:
 - `verification.json`: final verification results.
 - `gps-unmatched-*.txt`: timestamped unmatched-file reports with reasons.
 
-Timestamped operation logs sit beside the recovery directory, so planning failures are logged even before that directory exists. They record arguments, software versions, per-file progress, completion status and full error tracebacks. `exiftool.log` includes timestamps, filenames, return codes, warnings and writer output. Logs contain private local paths and metadata; keep them out of public repositories.
+Timestamped operation logs sit beside the recovery directory, so planning failures are logged even before that directory exists. They record arguments, software versions, per-file progress, completion status and full error tracebacks. `exiftool.log` includes timestamps, filenames, return codes, warnings and writer output. Logs contain local paths and photo metadata; keep them private.
 
 Do not delete an incomplete backup and assume work succeeded. If planning is interrupted, photos are untouched. Repeat the same `plan` command with `--resume` to reuse completed backups. The script checks the inventory, sizes and modification times before reusing saved metadata. It can also start a new plan in a new backup directory. If applying is interrupted, resume using the same backup directory.
+
+## Synthetic example
+
+`examples/make_photos.py` writes three tiny synthetic RAW files into a folder: a minimal TIFF with a 2x2 pixel strip and an EXIF capture time, stamped by ExifTool. `examples/track.gpx` is an invented two-minute track. The example camera clock runs 90 seconds fast, and the third photo was taken after the track ended, so it stays unmatched.
+
+```sh
+python3 examples/make_photos.py output/photos
+python3 photo_time_gps.py plan output/photos \
+  --reference DSC00010.ARW \
+  --actual 2030-07-09T19:58:30-05:00 \
+  --timezone America/Chicago \
+  --gpx examples/track.gpx \
+  --rename \
+  --backup output/recovery
+python3 photo_time_gps.py apply --backup output/recovery
+python3 photo_time_gps.py verify --backup output/recovery
+```
+
+`plan` prints `Clock correction: -90.0 seconds; GPS matches: 2/3`. After `apply`, `output/photos` holds `DSC0001.ARW` to `DSC0003.ARW` in capture order, and the first two carry GPS tags. `verify` prints a JSON report with `"checked": 3` and `"failures": []`, and `output/recovery/gps-unmatched-*-verified.txt` names the unmatched photo with the reason. `output/` is ignored by git. Delete it before running the example again. CI runs these same commands on every push.
+
+## Limitations
+
+- One reference photo measures a constant clock offset. Drift over several days and subsecond precision the camera did not record cannot be recovered.
+- There is no extrapolation before or after track coverage, and no interpolation across gaps longer than the configured limit. Unmatched photos keep their original GPS tags.
+- Stop estimates and long Timeline interpolation are approximate geotagging, not measured positions. The manifest records the assumption behind each one.
+- The recovery backup covers metadata edits only. It cannot replace a backup of the photos.
+- Only RAW files with one contiguous `SubIFD` strip are supported, and only Sony ARW has been round-trip tested on real files.
+- Extended attributes and sidecar files are outside the restore scope.
+- Commands must not run concurrently against the same folder.
+
+ExifTool may log `[minor] Oversized SubIFD StripByteCounts` for some Sony ARW files. Its author identifies this as a [known ARW issue](https://exiftool.org/forum/index.php?topic=17663.0). The script keeps the warning in the log and still requires unchanged RAW and preview hashes, preserved unrelated metadata, and byte-exact reconstruction of the original. Investigate any new or different warning rather than suppressing warnings globally.
 
 ## Development
 
 ```sh
-python3 -m unittest -v
-python3 -m compileall -q photo_time_gps.py
-# Optional style checks in a development virtual environment:
-python3 -m pip install -r requirements-dev.txt
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
 ruff check .
 ruff format --check .
+python -m unittest -v
 ```
 
-Tests use synthetic data. With ExifTool installed, the integration tests exercise GPS-only planning, Timeline filtering, calibration reuse across timezones, renaming, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures. For integration testing, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples, real tracks or Timeline exports.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under MIT.
-
-## Sony RAW layout warnings
-
-ExifTool may log `[minor] Oversized SubIFD StripByteCounts` for some Sony ARW files. Its author identifies this as a [known ARW issue](https://exiftool.org/forum/index.php?topic=17663.0). The script keeps the warning in the log and still requires unchanged RAW and preview hashes, preserved unrelated metadata, and byte-exact reconstruction of the original. Investigate any new or different warning rather than suppressing warnings globally.
+CI runs the same commands plus the synthetic example on Ubuntu 24.04. Tests use synthetic data only. With ExifTool installed, the integration tests exercise GPS-only planning, Timeline filtering, calibration reuse across timezones, renaming, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures; without it, those two tests are skipped. Before changing metadata writing or backup handling, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples, real tracks or Timeline exports. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Earlier versions
 
 The project was previously named Photo clock fix. `photo_clock_fix.py` remains a compatibility entry point for the new CLI. Existing recovery manifests and folder markers remain readable. Renaming is now opt-in with `--rename`, including through the compatibility entry point. Archived scripts in existing recovery folders are left unchanged.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
