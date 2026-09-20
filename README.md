@@ -1,4 +1,4 @@
-# Photo Time & GPS
+# photo-time-gps-aligner
 
 Correct a RAW camera clock, geotag photos from a GPX track or a Google Timeline export, and rename them in capture order, with a verified recovery backup of every metadata edit.
 
@@ -20,8 +20,8 @@ Python uses only its standard library. No photos, location exports or metadata a
 ## Install
 
 ```sh
-git clone https://github.com/martinfrancois/photo-time-gps.git
-cd photo-time-gps
+git clone https://github.com/martinfrancois/photo-time-gps-aligner.git
+cd photo-time-gps-aligner
 ```
 
 Install ExifTool with `sudo apt-get install libimage-exiftool-perl` on Debian and Ubuntu, `brew install exiftool` on macOS, or follow the [ExifTool install page](https://exiftool.org/install.html). Run the scripts from the clone with `python3`. There is nothing else to install.
