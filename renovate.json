@@ -4,9 +4,6 @@
     "config:recommended",
     "helpers:pinGitHubActionDigests"
   ],
-  "reviewers": [
-    "martinfrancois"
-  ],
   "labels": [
     "dependencies"
   ],
