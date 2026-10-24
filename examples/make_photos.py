@@ -17,10 +17,20 @@ PHOTOS = {
 CAMERA_OFFSET = "-05:00"
 
 
+# TIFF layout: IFD0 right after the header, then the SubIFD, then the pixel strip.
+IFD0_OFFSET = 8
+SUBIFD_OFFSET = 200
+STRIP_OFFSET = 600
+WIDTH = HEIGHT = 2
+BITS_PER_SAMPLE = 16
+STRIP = bytes(range(WIDTH * HEIGHT * BITS_PER_SAMPLE // 8))
+SHORT, LONG = 3, 4
+
+
 def write_tiff(path):
-    """A little-endian TIFF whose IFD0 points to one SubIFD with a 2x2 16-bit strip."""
-    data = bytearray(608)
-    data[:8] = struct.pack("<2sHI", b"II", 42, 8)
+    """A little-endian TIFF whose IFD0 points to one SubIFD with a 16-bit pixel strip."""
+    data = bytearray(STRIP_OFFSET + len(STRIP))
+    data[:IFD0_OFFSET] = struct.pack("<2sHI", b"II", 42, IFD0_OFFSET)
 
     def ifd(offset, entries):
         struct.pack_into("<H", data, offset, len(entries))
@@ -30,22 +40,22 @@ def write_tiff(path):
             )
         struct.pack_into("<I", data, offset + 2 + len(entries) * 12, 0)
 
-    ifd(8, [(330, 4, 1, 200)])  # SubIFDs
+    ifd(IFD0_OFFSET, [(330, LONG, 1, SUBIFD_OFFSET)])  # SubIFDs
     ifd(
-        200,
+        SUBIFD_OFFSET,
         [
-            (254, 4, 1, 0),  # NewSubfileType
-            (256, 4, 1, 2),  # ImageWidth
-            (257, 4, 1, 2),  # ImageLength
-            (258, 3, 1, 16),  # BitsPerSample
-            (259, 3, 1, 1),  # Compression
-            (262, 3, 1, 1),  # PhotometricInterpretation
-            (273, 4, 1, 600),  # StripOffsets
-            (278, 4, 1, 2),  # RowsPerStrip
-            (279, 4, 1, 8),  # StripByteCounts
+            (254, LONG, 1, 0),  # NewSubfileType
+            (256, LONG, 1, WIDTH),  # ImageWidth
+            (257, LONG, 1, HEIGHT),  # ImageLength
+            (258, SHORT, 1, BITS_PER_SAMPLE),  # BitsPerSample
+            (259, SHORT, 1, 1),  # Compression
+            (262, SHORT, 1, 1),  # PhotometricInterpretation
+            (273, LONG, 1, STRIP_OFFSET),  # StripOffsets
+            (278, LONG, 1, HEIGHT),  # RowsPerStrip
+            (279, LONG, 1, len(STRIP)),  # StripByteCounts
         ],
     )
-    data[600:] = bytes(range(8))
+    data[STRIP_OFFSET:] = STRIP
     path.write_bytes(data)
 
 
