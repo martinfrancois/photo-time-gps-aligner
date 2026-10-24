@@ -11,7 +11,7 @@ The tool verifies the RAW bytes, embedded previews, timestamps and GPS values as
 ## Requirements
 
 - Linux or macOS. Python's `zoneinfo` needs the system timezone database, which is the `tzdata` package on minimal Linux images. Windows is not supported because the recovery-directory lock uses `fcntl`.
-- Python 3.12 and ExifTool 12.76 are the versions CI tests on Ubuntu 24.04. The test suite also passes on Python 3.13. macOS is not covered by CI, so creation-time handling through `SetFile` is untested there.
+- Python 3.12 and ExifTool 12.76 are the versions CI tests on Ubuntu 24.04. macOS is not covered by CI, so creation-time handling through `SetFile` is untested there.
 - RAW files with one contiguous `SubIFD` image strip. Tested with Sony ARW. Unsupported layouts stop during planning, before edits.
 - Free disk space for compressed metadata backups and one temporary RAW file per worker.
 
@@ -231,10 +231,11 @@ python3 -m venv .venv
 python -m pip install -r requirements-dev.txt
 ruff check .
 ruff format --check .
+python -m compileall -q ./*.py examples
 python -m unittest -v
 ```
 
-CI runs the same commands plus the synthetic example on Ubuntu 24.04. Tests use synthetic data only. With ExifTool installed, the integration tests exercise GPS-only planning, Timeline filtering, calibration reuse across timezones, renaming, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures; without it, those two tests are skipped. Before changing metadata writing or backup handling, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples, real tracks or Timeline exports. See [CONTRIBUTING.md](CONTRIBUTING.md).
+CI runs the same commands, then the synthetic example, on Ubuntu 24.04 with ExifTool installed. Tests use synthetic data only. With ExifTool installed, the integration tests exercise GPS-only planning, Timeline filtering, calibration reuse across timezones, renaming, editing, repeat runs and byte-exact restoration using generated TIFF RAW fixtures; without it, those two tests are skipped. Before changing metadata writing or backup handling, work on copies of your own RAW files, run all four commands, and compare restored files byte for byte with the originals. Never commit photo samples, real tracks or Timeline exports. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Earlier versions
 
