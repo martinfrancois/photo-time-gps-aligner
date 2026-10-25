@@ -179,6 +179,22 @@ Timestamped operation logs sit beside the recovery directory, so planning failur
 
 Do not delete an incomplete backup and assume work succeeded. If planning is interrupted, photos are untouched. Repeat the same `plan` command with `--resume` to reuse completed backups. The script checks the inventory, sizes and modification times before reusing saved metadata. It can also start a new plan in a new backup directory. If applying is interrupted, resume using the same backup directory.
 
+## Synthetic example
+
+The example uses generated RAW files and an invented GPX track:
+
+```sh
+python3 examples/make_photos.py output/photos
+python3 photo_time_gps.py plan output/photos \
+  --reference DSC00010.ARW --actual 2030-07-09T19:58:30-05:00 \
+  --timezone America/Chicago --gpx examples/track.gpx \
+  --rename --backup output/recovery
+python3 photo_time_gps.py apply --backup output/recovery
+python3 photo_time_gps.py verify --backup output/recovery
+```
+
+Planning reports a -90 second clock correction and two GPS matches among three photos. Verification reports three checked photos and no failures. Use a fresh output folder for each run.
+
 ## Development
 
 ```sh
