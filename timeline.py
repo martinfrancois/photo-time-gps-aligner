@@ -7,9 +7,11 @@ import json
 import math
 import re
 
+from timestamps import parse_iso_datetime
+
 
 def timestamp(value):
-    instant = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    instant = parse_iso_datetime(value)
     if instant.utcoffset() is None:
         raise ValueError("Timeline timestamps must include a UTC offset")
     return instant.timestamp()

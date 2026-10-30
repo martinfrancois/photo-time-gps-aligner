@@ -22,6 +22,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 from timeline import Timeline
+from timestamps import parse_iso_datetime
 from matching import match as match_locations
 
 UTC = dt.timezone.utc
@@ -183,7 +184,7 @@ def load_track(path):
             t = p.find("{*}time")
             if t is None or not t.text:
                 continue
-            instant = dt.datetime.fromisoformat(t.text.replace("Z", "+00:00"))
+            instant = parse_iso_datetime(t.text)
             if instant.utcoffset() is None:
                 raise ValueError("GPX timestamps must include UTC offsets")
             lat, lon = float(p.attrib["lat"]), float(p.attrib["lon"])
@@ -409,7 +410,7 @@ def plan(args):
     elif args.resume:
         raise ValueError("No plan exists to resume")
     zone = ZoneInfo(args.timezone) if args.timezone else None
-    actual = dt.datetime.fromisoformat(args.actual) if args.actual else None
+    actual = parse_iso_datetime(args.actual) if args.actual else None
     if correct_time:
         if zone is None:
             raise ValueError("Clock correction requires --timezone")
@@ -503,7 +504,7 @@ def plan(args):
         )
         if not ref_meta.get("ExifIFD:OffsetTimeOriginal"):
             raise ValueError("Calibration reference needs an explicit EXIF UTC offset")
-        actual = dt.datetime.fromisoformat(calibration["actual"])
+        actual = parse_iso_datetime(calibration["actual"])
         if actual.utcoffset() is None:
             raise ValueError("Calibration actual timestamp needs a UTC offset")
         drift = actual - capture_instant(ref_meta)
