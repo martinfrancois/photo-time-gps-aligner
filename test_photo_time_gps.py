@@ -11,7 +11,7 @@ import photo_time_gps as fix
 class ClockTests(unittest.TestCase):
     def test_clock_offset_rolls_date(self):
         source = fix.captured({"ExifIFD:DateTimeOriginal": "2030:07:10 05:53:01"})
-        actual = dt.datetime.fromisoformat("2030-07-09T22:54:33.27-05:00")
+        actual = fix.parse_iso_datetime("2030-07-09T22:54:33.27-05:00")
         offset = actual.replace(tzinfo=None) - source
         self.assertEqual(offset.total_seconds(), -25107.73)
         self.assertEqual(source + offset, actual.replace(tzinfo=None))

@@ -56,6 +56,51 @@ def synthetic_raw(path, stamp):
 
 @unittest.skipUnless(shutil.which("exiftool"), "ExifTool required for integration test")
 class IntegrationTests(unittest.TestCase):
+    def test_fractional_actual_survives_plan_apply_verify_and_restore(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            photos = root / "photos"
+            photos.mkdir()
+            original = photos / "reference.ARW"
+            synthetic_raw(original, "2030:07:09 21:00:00")
+            original_bytes = original.read_bytes()
+            backup = root / "recovery"
+
+            def cli(*args):
+                result = subprocess.run(
+                    [sys.executable, app.__file__, *map(str, args)],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            cli(
+                "plan",
+                photos,
+                "--reference",
+                "reference.ARW",
+                "--actual",
+                "2030-07-09T20:59:58.27-05:00",
+                "--timezone",
+                "America/Chicago",
+                "--backup",
+                backup,
+            )
+            manifest = app.load(backup)
+            self.assertEqual(manifest["actual"], "2030-07-09T20:59:58.27-05:00")
+            self.assertEqual(
+                manifest["records"][0]["corrected"], "2030-07-09T20:59:58.270000-05:00"
+            )
+            cli("apply", "--backup", backup)
+            cli("verify", "--backup", backup)
+            self.assertEqual(
+                json.loads((backup / "verification.json").read_text())["failures"], []
+            )
+            cli("restore", "--backup", backup, "--output", root / "restored")
+            self.assertEqual(
+                (root / "restored" / original.name).read_bytes(), original_bytes
+            )
+
     def test_gps_only_preserves_dates_names_and_unmatched_bytes_and_can_repeat(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

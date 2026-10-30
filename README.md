@@ -6,7 +6,7 @@ The tool creates a compact recovery backup before editing anything. It verifies 
 
 ## Requirements
 
-- macOS or Linux, with Python 3.10 or later and the IANA timezone database. CI tests Python 3.12 on Ubuntu 24.04; macOS creation-time handling is not covered by CI.
+- macOS or Linux, with Python 3.10 or later and the IANA timezone database. CI tests Python 3.10 and 3.12 on Ubuntu 24.04; macOS creation-time handling is not covered by CI.
 - [ExifTool](https://exiftool.org/). On macOS, install it with `brew install exiftool`.
 - RAW files with one contiguous `SubIFD` image strip. Tested with Sony ARW. Unsupported layouts stop during planning, before edits.
 - Free disk space for compressed metadata backups and one temporary RAW file per worker.
