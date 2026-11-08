@@ -1,8 +1,8 @@
 """Stop markers are approximate references, not assumed stop-start times."""
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from audit_stops import audit
 

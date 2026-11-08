@@ -2,30 +2,33 @@
 """Correct RAW photo times, match GPX or Google Timeline locations, and optionally rename photos."""
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import bisect
 import datetime as dt
+import fcntl
 import gzip
 import hashlib
+import itertools
 import json
 import logging
-import platform
-import fcntl
 import math
 import os
-from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
 import sys
 import uuid
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from matching import match as match_locations
 from timeline import Timeline
 from timestamps import parse_iso_datetime
-from matching import match as match_locations
 
 UTC = dt.timezone.utc
+logger = logging.getLogger(__name__)
 CHUNK = 8 * 1024 * 1024
 
 
@@ -146,24 +149,24 @@ def backup_one(path, meta, destination):
         ("thumbnail", "IFD1:ThumbnailOffset", "IFD1:ThumbnailLength"),
     ]:
         if start in meta and size in meta:
-            previews[label] = dict(
-                start_tag=start,
-                size_tag=size,
-                length=meta[size],
-                sha256=hash_region(path, meta[start], meta[size]),
-            )
-    return dict(
-        previews=previews,
-        size=st.st_size,
-        offset=offset,
-        length=length,
-        sha256=whole.hexdigest(),
-        raw_sha256=raw.hexdigest(),
-        birthtime=getattr(st, "st_birthtime", None),
-        mtime_ns=st.st_mtime_ns,
-        atime_ns=st.st_atime_ns,
-        mode=st.st_mode,
-    )
+            previews[label] = {
+                "start_tag": start,
+                "size_tag": size,
+                "length": meta[size],
+                "sha256": hash_region(path, meta[start], meta[size]),
+            }
+    return {
+        "previews": previews,
+        "size": st.st_size,
+        "offset": offset,
+        "length": length,
+        "sha256": whole.hexdigest(),
+        "raw_sha256": raw.hexdigest(),
+        "birthtime": getattr(st, "st_birthtime", None),
+        "mtime_ns": st.st_mtime_ns,
+        "atime_ns": st.st_atime_ns,
+        "mode": st.st_mode,
+    }
 
 
 class TrackSegments(list):
@@ -200,7 +203,7 @@ def load_track(path):
                 )
             )
         points.sort()
-        if any(a[0] == b[0] and a[1:] != b[1:] for a, b in zip(points, points[1:])):
+        if any(a[0] == b[0] and a[1:] != b[1:] for a, b in itertools.pairwise(points)):
             raise ValueError("Conflicting GPX points at the same time")
         if points:
             tracks.append(points)
@@ -228,13 +231,13 @@ def position(tracks, instant, max_gap):
         times = [p[0] for p in points]
         i = bisect.bisect_left(times, t)
         if i < len(points) and times[i] == t:
-            return dict(
-                lat=points[i][1],
-                lon=points[i][2],
-                altitude=points[i][3],
-                gap=0,
-                method="exact",
-            )
+            return {
+                "lat": points[i][1],
+                "lon": points[i][2],
+                "altitude": points[i][3],
+                "gap": 0,
+                "method": "exact",
+            }
         if not 0 < i < len(points):
             continue
         a, b = points[i - 1], points[i]
@@ -269,7 +272,13 @@ def position(tracks, instant, max_gap):
             if a[3] is not None and b[3] is not None
             else None
         )
-        return dict(lat=lat, lon=lon, altitude=altitude, gap=gap, method="interpolated")
+        return {
+            "lat": lat,
+            "lon": lon,
+            "altitude": altitude,
+            "gap": gap,
+            "method": "interpolated",
+        }
     return None
 
 
@@ -313,7 +322,7 @@ def unmatched_report(backup, manifest, phase):
     if not unmatched:
         lines.append("All photos matched GPS track points.")
     output.write_text("\n".join(lines) + "\n")
-    logging.info("GPS unmatched report: %s (%d photos)", output, len(unmatched))
+    logger.info("GPS unmatched report: %s (%d photos)", output, len(unmatched))
     print(f"GPS unmatched report: {output}", flush=True)
     return str(output)
 
@@ -520,7 +529,7 @@ def plan(args):
                 raise ValueError(
                     "Camera identity or UTC offset differs from calibration reference"
                 )
-        logging.info(
+        logger.info(
             "Reused calibration; UTC clock correction %.6f seconds",
             drift.total_seconds(),
         )
@@ -530,7 +539,7 @@ def plan(args):
         else None
     )
     if timeline:
-        logging.info("Timeline sample filtering: %s", dict(timeline.stats))
+        logger.info("Timeline sample filtering: %s", dict(timeline.stats))
     tracks = load_tracks(gpx_paths, getattr(args, "gpx_gap_policy", "auto"))
 
     def natural(p):
@@ -594,15 +603,15 @@ def plan(args):
                 f"Unsupported RAW layout: {p.name}. Expected one contiguous SubIFD strip."
             )
         records.append(
-            dict(
-                correct_time=correct_time,
-                original=p.name,
-                target=name,
-                stage=f".photo-clock-{run_id}-{i}{p.suffix}",
-                corrected=corrected.isoformat(timespec="microseconds"),
-                gps=position(tracks, corrected, args.max_gap) if tracks else None,
-                metadata=by_path[p],
-            )
+            {
+                "correct_time": correct_time,
+                "original": p.name,
+                "target": name,
+                "stage": f".photo-clock-{run_id}-{i}{p.suffix}",
+                "corrected": corrected.isoformat(timespec="microseconds"),
+                "gps": position(tracks, corrected, args.max_gap) if tracks else None,
+                "metadata": by_path[p],
+            }
         )
         records[-1]["gps"], records[-1]["gps_reason"] = match_locations(
             tracks,
@@ -626,57 +635,59 @@ def plan(args):
                 r["backup_file"] = old.get("backup_file", f"{j}.gz")
     for r in records:
         r.setdefault("backup_file", r["original"] + ".gz")
-    manifest = dict(
-        version=1,
-        folder=str(folder),
-        run_id=run_id,
-        timezone=args.timezone,
-        reference=reference.name if reference else None,
-        correct_time=correct_time,
-        rename=rename,
-        previous_run_id=previous_run_id,
-        ignored_names=ignored_names,
-        only_missing_gps=getattr(args, "only_missing_gps", False),
-        timeline_max_gap=getattr(args, "timeline_max_gap", 600),
-        gpx_gap_policy=getattr(args, "gpx_gap_policy", "auto"),
-        gpx_creator=tracks.sources[0].creator if len(gpx_paths) == 1 else None,
-        gpx_sources=[
-            dict(
-                path=source.path,
-                creator=source.creator,
-                sha256=hash_region(path, 0, path.stat().st_size),
-            )
+    manifest = {
+        "version": 1,
+        "folder": str(folder),
+        "run_id": run_id,
+        "timezone": args.timezone,
+        "reference": reference.name if reference else None,
+        "correct_time": correct_time,
+        "rename": rename,
+        "previous_run_id": previous_run_id,
+        "ignored_names": ignored_names,
+        "only_missing_gps": getattr(args, "only_missing_gps", False),
+        "timeline_max_gap": getattr(args, "timeline_max_gap", 600),
+        "gpx_gap_policy": getattr(args, "gpx_gap_policy", "auto"),
+        "gpx_creator": tracks.sources[0].creator if len(gpx_paths) == 1 else None,
+        "gpx_sources": [
+            {
+                "path": source.path,
+                "creator": source.creator,
+                "sha256": hash_region(path, 0, path.stat().st_size),
+            }
             for path, source in zip(gpx_paths, tracks.sources)
         ],
-        stationary_radius=getattr(args, "stationary_radius", 50),
-        stationary_max_gap=getattr(args, "stationary_max_gap", 3600),
-        actual=args.actual,
-        calibration_path=str(calibration_path.resolve()) if calibration_path else None,
-        calibration_sha256=hash_region(
+        "stationary_radius": getattr(args, "stationary_radius", 50),
+        "stationary_max_gap": getattr(args, "stationary_max_gap", 3600),
+        "actual": args.actual,
+        "calibration_path": str(calibration_path.resolve())
+        if calibration_path
+        else None,
+        "calibration_sha256": hash_region(
             calibration_path, 0, calibration_path.stat().st_size
         )
         if calibration_path
         else None,
-        utc_correction_seconds=drift.total_seconds() if drift is not None else None,
-        timeline_path=str(timeline_path.resolve()) if timeline_path else None,
-        timeline_sha256=hash_region(timeline_path, 0, timeline_path.stat().st_size)
+        "utc_correction_seconds": drift.total_seconds() if drift is not None else None,
+        "timeline_path": str(timeline_path.resolve()) if timeline_path else None,
+        "timeline_sha256": hash_region(timeline_path, 0, timeline_path.stat().st_size)
         if timeline_path
         else None,
-        timeline_stats=dict(timeline.stats) if timeline else None,
-        max_accuracy=getattr(args, "max_accuracy", 50),
-        offset_seconds=offset.total_seconds() if drift is None else None,
-        gpx_path=str(gpx_paths[0].resolve()) if len(gpx_paths) == 1 else None,
-        exiftool_version=subprocess.check_output(
+        "timeline_stats": dict(timeline.stats) if timeline else None,
+        "max_accuracy": getattr(args, "max_accuracy", 50),
+        "offset_seconds": offset.total_seconds() if drift is None else None,
+        "gpx_path": str(gpx_paths[0].resolve()) if len(gpx_paths) == 1 else None,
+        "exiftool_version": subprocess.check_output(
             ["exiftool", "-ver"], text=True
         ).strip(),
-        gpx_sha256=hash_region(gpx_paths[0], 0, gpx_paths[0].stat().st_size)
+        "gpx_sha256": hash_region(gpx_paths[0], 0, gpx_paths[0].stat().st_size)
         if len(gpx_paths) == 1
         else None,
-        max_gap=args.max_gap,
-        tie_breaker="Sony:ShutterCount" if use_shutter else "natural filename",
-        records=records,
-        ready=False,
-    )
+        "max_gap": args.max_gap,
+        "tie_breaker": "Sony:ShutterCount" if use_shutter else "natural filename",
+        "records": records,
+        "ready": False,
+    }
     save(backup / "manifest.json", manifest)
     if drift is not None:
         print(
@@ -688,9 +699,9 @@ def plan(args):
     )
     for i, record in enumerate(records):
         if "backup" in record:
-            logging.info("Reusing completed backup for %s", record["original"])
+            logger.info("Reusing completed backup for %s", record["original"])
             continue
-        logging.info("Backing up %d/%d %s", i + 1, len(records), record["original"])
+        logger.info("Backing up %d/%d %s", i + 1, len(records), record["original"])
         record["backup"] = backup_one(
             folder / record["original"],
             record["metadata"],
@@ -855,13 +866,13 @@ def check_metadata(record, meta):
             "IFD1:ModifyDate",
             "Sony:SonyDateTime",
         ]:
-            if tag in record["metadata"] or tag in [
+            written = tag in record["metadata"] or tag in [
                 "ExifIFD:DateTimeOriginal",
                 "ExifIFD:CreateDate",
                 "IFD0:ModifyDate",
-            ]:
-                if meta.get(tag) != stamp:
-                    raise ValueError(f"{tag} mismatch: {meta.get(tag)!r} vs {stamp!r}")
+            ]
+            if written and meta.get(tag) != stamp:
+                raise ValueError(f"{tag} mismatch: {meta.get(tag)!r} vs {stamp!r}")
         for tag in ["OffsetTime", "OffsetTimeOriginal", "OffsetTimeDigitized"]:
             if meta.get("ExifIFD:" + tag) != expected_zone:
                 raise ValueError(f"{tag} mismatch")
@@ -936,7 +947,7 @@ def apply(args):
             or manifest.get("rename", True)
         ):
             raise ValueError("Folder belongs to a different run")
-    save(marker, dict(run_id=manifest["run_id"], backup=str(backup)))
+    save(marker, {"run_id": manifest["run_id"], "backup": str(backup)})
     state_path = backup / "state.json"
     state = (
         json.loads(state_path.read_text())
@@ -977,7 +988,7 @@ def apply(args):
     if state["phase"] == "write":
 
         def process(i, r):
-            logging.info(
+            logger.info(
                 "Applying %d/%d %s -> %s; capture=%s; GPS=%s",
                 i + 1,
                 len(records),
@@ -987,7 +998,7 @@ def apply(args):
                 "matched" if r["gps"] else r["gps_reason"],
             )
             if r["gps"]:
-                logging.info(
+                logger.info(
                     "GPS provenance file=%s source=%s method=%s gap_seconds=%s approximate=%s",
                     r["original"],
                     r["gps"].get("source", "GPX"),
@@ -1011,6 +1022,7 @@ def apply(args):
                         result = subprocess.run(
                             ["exiftool"] + edits + [str(stage)],
                             capture_output=True,
+                            check=False,
                             text=True,
                         )
                     else:
@@ -1021,6 +1033,7 @@ def apply(args):
                     result = subprocess.run(
                         ["exiftool", "-o", str(stage)] + edits + [str(original)],
                         capture_output=True,
+                        check=False,
                         text=True,
                     )
                 with (backup / "exiftool.log").open("a") as log:
@@ -1092,14 +1105,14 @@ def verify(args):
     folder = Path(manifest["folder"])
     records = manifest["records"]
     metas = exif([folder / r["target"] for r in records], all_tags=True)
-    report = dict(
-        photos=len(records),
-        checked=0,
-        gps_matched=sum(r["gps"] is not None for r in records),
-        gps_unmatched=[r["target"] for r in records if r["gps"] is None],
-        offset_seconds=manifest["offset_seconds"],
-        failures=[],
-    )
+    report = {
+        "photos": len(records),
+        "checked": 0,
+        "gps_matched": sum(r["gps"] is not None for r in records),
+        "gps_unmatched": [r["target"] for r in records if r["gps"] is None],
+        "offset_seconds": manifest["offset_seconds"],
+        "failures": [],
+    }
     for i, (r, meta) in enumerate(zip(records, metas)):
         try:
             check_metadata(r, meta)
@@ -1130,15 +1143,15 @@ def verify(args):
             ):
                 raise ValueError("Filesystem creation time mismatch")
             report["checked"] += 1
-            logging.info(
+            logger.info(
                 "Verified %d/%d %s: metadata, RAW, previews and byte-exact reconstruction passed",
                 i + 1,
                 len(records),
                 r["target"],
             )
         except Exception as e:
-            logging.exception("Verification failed for %s", r["target"])
-            report["failures"].append(dict(file=r["target"], error=str(e)))
+            logger.exception("Verification failed for %s", r["target"])
+            report["failures"].append({"file": r["target"], "error": str(e)})
         if i % 25 == 0 or i == len(records) - 1:
             print(f"Final verification {i + 1}/{len(records)}", flush=True)
             save(backup / "verification.json", report)
@@ -1357,7 +1370,7 @@ def main():
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
-    logging.info(
+    logger.info(
         "Command %s; Python %s; platform %s; arguments %s",
         args.command,
         sys.version,
@@ -1373,13 +1386,13 @@ def main():
             except BlockingIOError:
                 raise ValueError("Another command is using this recovery directory")
             args.func(args)
-        logging.info("Command completed successfully")
+        logger.info("Command completed successfully")
     except Exception as e:
-        logging.exception("Command failed")
+        logger.exception("Command failed")
         print(f"Error: {e}. Details: {log_path}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        logging.warning("Interrupted by user; use the saved journal to resume apply")
+        logger.warning("Interrupted by user; use the saved journal to resume apply")
         print(f"Interrupted. Details: {log_path}", file=sys.stderr)
         return 130
     return 0

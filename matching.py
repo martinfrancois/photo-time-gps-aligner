@@ -1,9 +1,9 @@
 """Match GPX or Timeline, including optional recorder-specific stop estimates."""
 
 import bisect
+import datetime as dt
 import math
 import re
-import datetime as dt
 
 
 def distance(p, q):

@@ -1,9 +1,9 @@
-import datetime as dt
-from pathlib import Path
-import tempfile
 import argparse
-from unittest.mock import patch
+import datetime as dt
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import photo_time_gps as fix
 
@@ -71,13 +71,13 @@ class ClockTests(unittest.TestCase):
             "separate", fix.unmatched_reason([track[0][:1], track[0][1:]], when(20), 60)
         )
         with tempfile.TemporaryDirectory() as directory:
-            record = dict(
-                target="DSC0001.ARW",
-                original="DSC0123.ARW",
-                corrected=when(0).isoformat(),
-                gps=None,
-                gps_reason="Before first GPS point.",
-            )
+            record = {
+                "target": "DSC0001.ARW",
+                "original": "DSC0123.ARW",
+                "corrected": when(0).isoformat(),
+                "gps": None,
+                "gps_reason": "Before first GPS point.",
+            }
             path = Path(
                 fix.unmatched_report(Path(directory), {"records": [record]}, "verified")
             )
@@ -136,9 +136,9 @@ class ClockTests(unittest.TestCase):
                 patch.object(fix, "exif", return_value=metas),
                 patch.object(fix.subprocess, "check_output", return_value="test"),
                 patch.object(fix, "backup_one", side_effect=interrupted),
+                self.assertRaisesRegex(OSError, "interruption"),
             ):
-                with self.assertRaisesRegex(OSError, "interruption"):
-                    fix.plan(args)
+                fix.plan(args)
             args.resume = True
             with (
                 patch.object(

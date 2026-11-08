@@ -2,12 +2,12 @@
 
 import datetime as dt
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import photo_time_gps as app
 from test_integration import synthetic_raw
@@ -135,6 +135,7 @@ class TimelineTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, app.__file__, *map(str, args)],
                     capture_output=True,
+                    check=False,
                     text=True,
                 )
                 self.assertEqual(

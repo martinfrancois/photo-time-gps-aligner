@@ -1,11 +1,11 @@
 """Conservative matching of measured positions from Google device Timeline exports."""
 
 import bisect
-from collections import Counter
 import datetime as dt
 import json
 import math
 import re
+from collections import Counter
 
 from timestamps import parse_iso_datetime
 
@@ -25,7 +25,9 @@ class Timeline:
             raise ValueError("Maximum Timeline accuracy must be positive")
         data = json.loads(path.read_text())
         if not isinstance(data, dict) or not isinstance(data.get("rawSignals"), list):
-            raise ValueError(
+            # The file holds the wrong export, not a wrong argument type, so this
+            # stays the ValueError every other unreadable-input check raises.
+            raise ValueError(  # noqa: TRY004
                 "Expected Google device export with rawSignals.position; other Timeline formats are unsupported"
             )
         self.stats = Counter()

@@ -4,10 +4,11 @@
 import argparse
 import bisect
 import datetime as dt
+import itertools
 import json
-from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from matching import distance, match
 from photo_time_gps import load_track, position, unmatched_reason
@@ -18,7 +19,7 @@ def audit(path, max_gap=60):
     root = ET.parse(path).getroot()
     gaps = []
     for segment_index, points in enumerate(tracks):
-        for index, (left, right) in enumerate(zip(points, points[1:])):
+        for index, (left, right) in enumerate(itertools.pairwise(points)):
             if right[0] - left[0] > max_gap:
                 gaps.append(
                     {

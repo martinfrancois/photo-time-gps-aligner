@@ -2,11 +2,11 @@
 """Write three tiny synthetic RAW files for the README example. Requires ExifTool."""
 
 import argparse
-from pathlib import Path
 import shutil
 import struct
 import subprocess
 import sys
+from pathlib import Path
 
 # Camera time of each photo. The README example treats this clock as 90 seconds fast.
 PHOTOS = {

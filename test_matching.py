@@ -2,14 +2,14 @@
 
 import datetime as dt
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 import photo_time_gps as a
 from matching import match
-from timeline import Timeline
 from test_timeline import signal
+from timeline import Timeline
 
 
 class GapTests(unittest.TestCase):
