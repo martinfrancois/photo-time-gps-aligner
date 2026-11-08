@@ -1,13 +1,13 @@
 """End-to-end GPS-only checks using synthetic TIFF RAW bytes, never personal media."""
 
 import json
-from pathlib import Path
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import photo_time_gps as app
 
@@ -70,6 +70,7 @@ class IntegrationTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, app.__file__, *map(str, args)],
                     capture_output=True,
+                    check=False,
                     text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -119,6 +120,7 @@ class IntegrationTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(Path(app.__file__)), *map(str, args)],
                     capture_output=True,
+                    check=False,
                     text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -147,9 +149,7 @@ class IntegrationTests(unittest.TestCase):
                 self.assertEqual(result["checked"], 2)
                 self.assertEqual(result["gps_matched"], 1)
                 self.assertEqual(result["failures"], [])
-                self.assertEqual(
-                    set(p.name for p in photos.glob("*.ARW")), set(originals)
-                )
+                self.assertEqual({p.name for p in photos.glob("*.ARW")}, set(originals))
                 for p in photos.glob("*.ARW"):
                     self.assertAlmostEqual(
                         p.stat().st_mtime_ns / 1e9, times[p.name] / 1e9, places=4

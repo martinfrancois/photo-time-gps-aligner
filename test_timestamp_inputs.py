@@ -2,9 +2,9 @@
 
 import datetime as dt
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from photo_time_gps import load_track
 from timeline import Timeline
